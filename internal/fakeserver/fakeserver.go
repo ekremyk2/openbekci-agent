@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,7 +31,8 @@ type Server struct {
 	*httptest.Server
 	t testing.TB
 
-	mu sync.Mutex
+	mu      sync.Mutex
+	offline atomic.Bool
 
 	// identity
 	OrgID, SiteID, AgentID string
@@ -141,7 +143,13 @@ func New(t testing.TB) *Server {
 	mux.HandleFunc("GET /v1/agent/ws", s.handleWS)
 	mux.HandleFunc("POST /v1/agent/poll", s.handlePoll)
 	mux.HandleFunc("POST /v1/agent/token:rotate", s.handleRotate)
-	s.Server = httptest.NewTLSServer(mux)
+	s.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.offline.Load() {
+			http.Error(w, "offline", http.StatusServiceUnavailable)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(s.Close)
 	return s
 }
@@ -637,6 +645,8 @@ func (s *Server) handleMessage(env protocol.Envelope) {
 			s.snapshotLocked()
 		case protocol.AckDuplicate:
 			s.dupAcks++
+		case protocol.AckUnsupported:
+			s.unsupp++
 		}
 		if c, ok := s.commands[m.Ref]; ok {
 			a := *m
@@ -832,4 +842,22 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// SetOffline makes every endpoint answer 503 and drops the live connection,
+// like an unreachable server.
+func (s *Server) SetOffline(v bool) {
+	s.offline.Store(v)
+	if v {
+		s.DropConnection()
+	}
+}
+
+// SendEnvelope sends an arbitrary message (e.g. an unknown type).
+func (s *Server) SendEnvelope(typ string, payload any) protocol.Envelope {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env := s.envLocked(typ, payload)
+	s.sendLocked(env)
+	return env
 }

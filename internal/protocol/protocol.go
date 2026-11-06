@@ -570,7 +570,9 @@ func NewAck(ref, status string, detail any) (Ack, error) {
 		if err != nil {
 			return Ack{}, err
 		}
-		a.Detail = raw
+		if string(raw) != "null" { // a typed nil map or slice means "no detail"
+			a.Detail = raw
+		}
 	}
 	return a, nil
 }
