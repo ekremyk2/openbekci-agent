@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS queue (
   plate_enc BLOB,
   hold INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS dead_letter (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  json TEXT NOT NULL,
+  plate_enc BLOB,
+  at_ms INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS command_seen (id TEXT PRIMARY KEY, result TEXT NOT NULL, at_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_stage (
@@ -165,7 +173,7 @@ func (s *Store) Wipe(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, t := range []string{"meta", "entry", "uses", "queue", "command_seen", "config", "snapshot_stage"} {
+	for _, t := range []string{"meta", "entry", "uses", "queue", "dead_letter", "command_seen", "config", "snapshot_stage"} {
 		stmt := "DELETE FROM " + t //nolint:gosec // t is one of the fixed table names above
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
@@ -344,11 +352,22 @@ func (s *Store) queryEntries(ctx context.Context, q string, args ...any) ([]prot
 	for rows.Next() {
 		e, err := s.scanEntry(rows)
 		if err != nil {
+			if errors.Is(err, ErrCorrupt) {
+				_ = rows.Close()
+				s.resetAllowList(ctx)
+			}
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// resetAllowList forgets the stored allow-list version after an undecryptable
+// entry (wrong or replaced key, bit rot): the next hello announces version 0
+// and the server answers with a full snapshot that replaces the damaged rows.
+func (s *Store) resetAllowList(ctx context.Context) {
+	_ = s.SetMeta(ctx, MetaSnapshotVersion, "0")
 }
 
 // Lookup returns the entries with exactly (kind, value), ordered by id.
@@ -660,6 +679,7 @@ func (s *Store) NextBatch(ctx context.Context, after int64, limit, maxBytes int)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []QueuedEvent
+	var bad []deadRow
 	total := 0
 	for rows.Next() {
 		var (
@@ -675,19 +695,69 @@ func (s *Store) NextBatch(ctx context.Context, after int64, limit, maxBytes int)
 		}
 		var ev protocol.Event
 		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
-			return nil, err
+			bad = append(bad, deadRow{seq, id, raw, enc, "unparsable: " + err.Error()})
+			continue
 		}
 		if enc != nil {
 			plate, err := s.seal.open(enc, "queue:"+id)
 			if err != nil {
-				return nil, err
+				bad = append(bad, deadRow{seq, id, raw, enc, err.Error()})
+				continue
 			}
 			ev.ObservedPlate = string(plate)
 		}
 		total += len(raw)
 		out = append(out, QueuedEvent{Seq: seq, Event: ev, Size: len(raw)})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
+	// A poisoned row must never block the uploads behind it.
+	if len(bad) > 0 {
+		if err := s.bury(ctx, bad); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+type deadRow struct {
+	seq     int64
+	id, raw string
+	enc     []byte
+	reason  string
+}
+
+// bury moves undecryptable or unparsable queue rows into dead_letter.
+func (s *Store) bury(ctx context.Context, rows []deadRow) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	for _, r := range rows {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dead_letter(event_id, reason, json, plate_enc, at_ms) VALUES(?,?,?,?,?)`, r.id, r.reason, r.raw, r.enc, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM queue WHERE seq = ?`, r.seq); err != nil {
+			return err
+		}
+	}
+	// Keep the evidence bounded.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM dead_letter WHERE id NOT IN (SELECT id FROM dead_letter ORDER BY id DESC LIMIT 1000)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeadLetters counts queue rows that were set aside as unreadable
+// (reported in the heartbeat as dead_letters).
+func (s *Store) DeadLetters(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM dead_letter`).Scan(&n)
+	return n, err
 }
 
 // DeleteEvents removes acknowledged (or permanently rejected) events.

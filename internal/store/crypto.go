@@ -82,14 +82,17 @@ func (s *sealer) seal(plain []byte, aad string) ([]byte, error) {
 	return s.aead.Seal(nonce, nonce, plain, []byte(aad)), nil
 }
 
+// ErrCorrupt marks a row that cannot be decrypted or parsed.
+var ErrCorrupt = errors.New("store: corrupt record")
+
 func (s *sealer) open(blob []byte, aad string) ([]byte, error) {
 	n := s.aead.NonceSize()
 	if len(blob) < n+s.aead.Overhead() {
-		return nil, errors.New("store: ciphertext too short")
+		return nil, fmt.Errorf("%w: ciphertext too short", ErrCorrupt)
 	}
 	plain, err := s.aead.Open(nil, blob[:n], blob[n:], []byte(aad))
 	if err != nil {
-		return nil, fmt.Errorf("store: decrypt: %w", err)
+		return nil, fmt.Errorf("%w: decrypt: %w", ErrCorrupt, err)
 	}
 	return plain, nil
 }

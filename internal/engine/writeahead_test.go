@@ -17,7 +17,15 @@ import (
 type wrapStore struct {
 	*store.Store
 	recordErr   error
+	lookupErr   error
 	releaseHook func() error
+}
+
+func (w *wrapStore) Lookup(ctx context.Context, kind, value string) ([]protocol.Entry, error) {
+	if w.lookupErr != nil {
+		return nil, w.lookupErr
+	}
+	return w.Store.Lookup(ctx, kind, value)
 }
 
 func (w *wrapStore) RecordAllow(ctx context.Context, ev protocol.Event, now time.Time, usesID string, maxUses int) error {
@@ -222,5 +230,21 @@ func TestFailedPulseDowngradesEventAndGivesTheUseBack(t *testing.T) {
 	f.advance(30 * time.Second)
 	if r, err := f.handle(eng); err != nil || !r.Opened {
 		t.Fatalf("retry after the relay recovered: %+v %v", r, err)
+	}
+}
+
+// An unreadable allow-list denies (fail closed) and the denial is still recorded.
+func TestUnreadableAllowListDeniesAndRecords(t *testing.T) {
+	f := newFixture(t)
+	singleUse(f)
+	opened := 0
+	ws := &wrapStore{Store: f.st, lookupErr: store.ErrCorrupt}
+	eng := f.engineOver(ws, func(context.Context, string) error { opened++; return nil })
+	r, err := f.handle(eng)
+	if err != nil || r.Opened || opened != 0 || r.Event.Decision != "deny" || r.Event.Reason != ReasonStoreError {
+		t.Fatalf("%+v %v opened=%d", r, err, opened)
+	}
+	if d, _ := f.st.QueueDepth(bg); d != 1 {
+		t.Fatalf("denial not recorded (depth %d)", d)
 	}
 }

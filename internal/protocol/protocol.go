@@ -691,6 +691,9 @@ type Heartbeat struct {
 	// store cannot be read.
 	LostEvents int64  `json:"lost_events,omitempty"`
 	StoreError string `json:"store_error,omitempty"`
+	// DeadLetters counts queued events set aside because they could not be
+	// decrypted or parsed.
+	DeadLetters int64 `json:"dead_letters,omitempty"`
 }
 
 // Validate implements Payload.

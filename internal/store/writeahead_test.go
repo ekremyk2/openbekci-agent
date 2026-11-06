@@ -119,3 +119,58 @@ func TestStateFilesAreOwnerOnly(t *testing.T) {
 		}
 	}
 }
+
+// One undecryptable or unparsable queue row must not block the uploads behind
+// it: it moves to dead_letter and is counted.
+func TestPoisonedQueueRowsGoToDeadLetter(t *testing.T) {
+	s := open(t, t.TempDir())
+	mk := func(plate string) protocol.Event {
+		e := allowEvent(1)
+		e.Decision, e.ObservedPlate = protocol.DecisionDeny, plate
+		return e
+	}
+	good1, poisoned, garbled, good2 := mk("34AAA111"), mk("34BBB222"), mk("34CCC333"), mk("34DDD444")
+	for _, e := range []protocol.Event{good1, poisoned, garbled, good2} {
+		if _, err := s.Enqueue(ctx, e, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE queue SET plate_enc = X'00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF' WHERE event_id = ?`, poisoned.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE queue SET json = '{not json' WHERE event_id = ?`, garbled.ID); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.NextBatch(ctx, 0, 10, 1<<20)
+	if err != nil {
+		t.Fatalf("a poisoned row blocked the queue: %v", err)
+	}
+	if len(b) != 2 || b[0].Event.ID != good1.ID || b[1].Event.ID != good2.ID {
+		t.Fatalf("batch %+v, want the two good events", b)
+	}
+	if n, _ := s.DeadLetters(ctx); n != 2 {
+		t.Fatalf("dead letters %d, want 2", n)
+	}
+	if d, _ := s.QueueDepth(ctx); d != 2 {
+		t.Fatalf("queue depth %d, want 2 (poisoned rows removed from the queue)", d)
+	}
+}
+
+// An undecryptable allow-list entry makes the store forget its version so the
+// next hello gets a full snapshot, and the read fails closed.
+func TestCorruptEntryResetsAllowListVersion(t *testing.T) {
+	s := open(t, t.TempDir())
+	e := entry(uid(7), "34ABC123")
+	if st, _, err := s.ApplyDelta(ctx, protocol.Delta{FromVersion: 0, ToVersion: 5, Changes: []protocol.Change{{Op: protocol.OpUpsert, Entry: &e}}}); err != nil || st != DeltaApplied {
+		t.Fatal(st, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE entry SET value_enc = X'0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20' WHERE id = ?`, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, "plate", "34ABC123"); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("lookup of a corrupt entry: %v", err)
+	}
+	if v, _ := s.SnapshotVersion(ctx); v != 0 {
+		t.Fatalf("version %d after corruption, want 0 so the server resyncs", v)
+	}
+}

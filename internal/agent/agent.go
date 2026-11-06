@@ -585,6 +585,8 @@ func (a *Agent) buildHeartbeat(ctx context.Context) protocol.Heartbeat {
 	keep(err)
 	dropped, err := a.st.DroppedEvents(ctx)
 	keep(err)
+	dead, err := a.st.DeadLetters(ctx)
+	keep(err)
 	// Unknown offset or a large one: open commands are refused (clock_suspect).
 	suspect := true
 	if a.offsetKnown.Load() {
@@ -597,7 +599,7 @@ func (a *Agent) buildHeartbeat(ctx context.Context) protocol.Heartbeat {
 	}
 	hb := protocol.Heartbeat{
 		SnapshotVersion: sv, QueueDepth: q, DroppedEvents: dropped, UptimeS: int64(a.now().Sub(a.start).Seconds()),
-		ClockSuspect: suspect, ClockOffsetMS: a.clockOffsetPtr(), Drivers: states, LostEvents: a.eng.LostEvents(),
+		ClockSuspect: suspect, ClockOffsetMS: a.clockOffsetPtr(), Drivers: states, LostEvents: a.eng.LostEvents(), DeadLetters: dead,
 	}
 	if storeErr != nil && ctx.Err() == nil {
 		hb.StoreError = truncate(storeErr.Error(), 200)

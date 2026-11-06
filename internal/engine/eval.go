@@ -16,6 +16,9 @@ const (
 	ReasonUsedUp        = "used_up"
 	ReasonAgentStopped  = "agent_stopped"
 	ReasonDriverError   = "driver_error"
+	// ReasonStoreError: the allow-list could not be read (corrupt row, DB
+	// error). The gate stays closed and the denial is still recorded.
+	ReasonStoreError = "store_error"
 )
 
 // Outcome is the result of evaluating candidate entries for a presentation.

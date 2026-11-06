@@ -223,29 +223,15 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 	case !valid:
 		reason = ReasonUnknown
 	default:
-		cands, err := e.o.Store.Lookup(ctx, p.Kind, value)
+		out, tol, err := e.lookupAndEvaluate(ctx, p, value, now, st)
 		if err != nil {
-			return Result{}, err
+			// Fail closed but keep the record: an unreadable allow-list must
+			// not silently swallow the presentation.
+			e.o.Log.Error("allow-list unreadable, denying", "point_id", p.PointID, "error", err)
+			reason = ReasonStoreError
+			break
 		}
-		if len(cands) == 0 && p.Kind == "plate" && st.PlateMatch == PlateTolerant {
-			if c, err := e.tolerantCandidates(ctx, value); err != nil {
-				return Result{}, err
-			} else if len(c) > 0 {
-				cands, tolerant = c, true
-			}
-		}
-		var usesErr error
-		out := Evaluate(cands, p.PointID, now, st.Location, func(id string) int {
-			n, err := e.o.Store.Uses(ctx, id)
-			if err != nil {
-				usesErr = err
-			}
-			return n
-		})
-		if usesErr != nil {
-			return Result{}, usesErr
-		}
-		reason, matched = out.Reason, out.Entry
+		reason, matched, tolerant = out.Reason, out.Entry, tol
 		if out.Allowed {
 			ev.Decision = protocol.DecisionAllow
 		}
@@ -306,6 +292,32 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 		e.o.OnEvent()
 	}
 	return Result{Event: ev, Opened: opened}, nil
+}
+
+func (e *Engine) lookupAndEvaluate(ctx context.Context, p Presentation, value string, now time.Time, st Settings) (Outcome, bool, error) {
+	tolerant := false
+	cands, err := e.o.Store.Lookup(ctx, p.Kind, value)
+	if err != nil {
+		return Outcome{}, false, err
+	}
+	if len(cands) == 0 && p.Kind == "plate" && st.PlateMatch == PlateTolerant {
+		c, err := e.tolerantCandidates(ctx, value)
+		if err != nil {
+			return Outcome{}, false, err
+		}
+		if len(c) > 0 {
+			cands, tolerant = c, true
+		}
+	}
+	var usesErr error
+	out := Evaluate(cands, p.PointID, now, st.Location, func(id string) int {
+		n, err := e.o.Store.Uses(ctx, id)
+		if err != nil {
+			usesErr = err
+		}
+		return n
+	})
+	return out, tolerant, usesErr
 }
 
 func (e *Engine) open(ctx context.Context, pointID string) error {
