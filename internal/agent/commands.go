@@ -100,13 +100,28 @@ func (s *sessState) openPoint(env protocol.Envelope, c *protocol.Command) {
 		s.ack(env.ID, status, detail)
 	}
 
-	// Expiry is judged on the server's timeline (agent clock + measured
-	// offset), and the TTL is capped at 60 s whatever expires_at says.
-	expires := c.ExpiresAt.Time
-	if limit := c.IssuedAt.Add(maxCommandTTL); expires.After(limit) {
-		expires = limit
+	// Freshness is judged on the server's timeline (agent clock + measured
+	// offset). With an unknown or huge offset the agent cannot tell a live
+	// command from a replayed one, so it fails closed.
+	now, ok := a.serverNow()
+	if !ok {
+		a.log.Error("open command refused: agent clock is not trustworthy", "command_id", env.ID)
+		finish(protocol.AckRefused, map[string]any{"reason": "clock_suspect"})
+		return
 	}
-	if a.serverNow().After(expires) {
+	issued, expires := c.IssuedAt.Time, c.ExpiresAt.Time
+	switch {
+	case !expires.After(issued):
+		finish(protocol.AckRefused, map[string]any{"reason": "invalid_ttl"})
+		return
+	case expires.Sub(issued) > maxCommandTTL:
+		finish(protocol.AckRefused, map[string]any{"reason": "ttl_too_long"})
+		return
+	case issued.After(now.Add(maxClockOffset)) || issued.Before(now.Add(-maxClockOffset)):
+		a.log.Error("open command refused: issued_at is more than 24 h from the corrected clock", "command_id", env.ID)
+		finish(protocol.AckRefused, map[string]any{"reason": "issued_at_out_of_range"})
+		return
+	case now.After(expires):
 		a.log.Warn("open command expired, not executing", "command_id", env.ID)
 		finish(protocol.AckExpired, map[string]any{"reason": "ttl"})
 		return

@@ -400,11 +400,11 @@ func TestCommandOpenTTLAndReplay(t *testing.T) {
 	if res.Status != protocol.AckExpired || len(m.Opens()) != 1 {
 		t.Fatalf("expired: %+v opens %d", res, len(m.Opens()))
 	}
-	// A TTL longer than 60 s is capped at 60 s: issued 2 min ago with a 10 min TTL is expired.
+	// A TTL longer than 60 s is refused outright.
 	long := h.fs.IssueOpenAt(pointID, time.Now().Add(-2*time.Minute), 10*time.Minute)
 	waitFor(t, 5*time.Second, "capped ttl result", func() bool { r, ok := h.fs.CommandResult(long); res = r; return ok })
-	if res.Status != protocol.AckExpired {
-		t.Fatalf("ttl cap: %+v", res)
+	if res.Status != protocol.AckRefused || !strings.Contains(string(res.Detail), "ttl_too_long") {
+		t.Fatalf("ttl cap: %+v %s", res, res.Detail)
 	}
 
 	// Unknown and disabled points.

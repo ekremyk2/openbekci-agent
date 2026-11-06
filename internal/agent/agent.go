@@ -127,15 +127,19 @@ func (a *Agent) MockDriver() *mock.Driver { return a.mockAll }
 func (a *Agent) now() time.Time { return a.o.Clock() }
 
 // serverNow is the agent clock corrected by the measured server offset (used
-// only to judge command expiry; decisions use the agent's own clock).
-func (a *Agent) serverNow() time.Time {
-	now := a.now()
-	if a.offsetKnown.Load() {
-		if off := time.Duration(a.offsetMS.Load()) * time.Millisecond; off > -maxClockOffset && off < maxClockOffset {
-			return now.Add(off)
-		}
+// only to judge command freshness; decisions use the agent's own clock). ok is
+// false when the offset is unknown or larger than 24 h: the agent's clock is
+// then not trustworthy for anything the server timeline decides, and the
+// caller must fail closed.
+func (a *Agent) serverNow() (now time.Time, ok bool) {
+	if !a.offsetKnown.Load() {
+		return time.Time{}, false
 	}
-	return now
+	off := time.Duration(a.offsetMS.Load()) * time.Millisecond
+	if off <= -maxClockOffset || off >= maxClockOffset {
+		return time.Time{}, false
+	}
+	return a.now().Add(off), true
 }
 
 func (a *Agent) notifyFlush() {
@@ -562,7 +566,8 @@ func (a *Agent) buildHeartbeat(ctx context.Context) protocol.Heartbeat {
 	keep(err)
 	dropped, err := a.st.DroppedEvents(ctx)
 	keep(err)
-	suspect := false
+	// Unknown offset or a large one: open commands are refused (clock_suspect).
+	suspect := true
 	if a.offsetKnown.Load() {
 		off := time.Duration(a.offsetMS.Load()) * time.Millisecond
 		suspect = off > clockSuspectAfter || off < -clockSuspectAfter
