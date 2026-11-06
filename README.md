@@ -30,7 +30,7 @@ sudo -u openbekci-agent openbekci-agent enrol --server https://bekci.example.org
 sudo systemctl enable --now openbekci-agent
 ```
 
-Enrolment stores the long-lived agent credential in `<state_dir>/agent.token` (mode 0600, never in `agent.yaml`) before it reports success. A server with a private CA works by putting the CA certificate in `ca_file`; certificate verification can not be turned off.
+Enrolment stores the long-lived agent credential in `<state_dir>/agent.token` (mode 0600, never in `agent.yaml`) before it reports success. On Windows the mode bits mean nothing, so the agent replaces the ACL of the state directory (and of the token, identity, key and database in it) with a protected DACL that grants full control to SYSTEM and to the account the agent runs as, and to nobody else (no inheritance from `ProgramData`, so the `Users` group cannot read it). Run the service under a dedicated account; Administrators can still take ownership, as root can on Linux. A server with a private CA works by putting the CA certificate in `ca_file`; certificate verification can not be turned off.
 
 By default the token alone identifies the site (`POST /v1/agent/enrol`). If your server only offers the org/site scoped endpoint, add `--org <id> --site <id>`.
 

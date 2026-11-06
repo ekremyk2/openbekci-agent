@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/openbekci/openbekci-agent/internal/fsutil"
 	"github.com/openbekci/openbekci-agent/internal/protocol"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -91,6 +92,11 @@ type Store struct {
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("store: state dir: %w", err)
+	}
+	// Owner-only on every platform (a protected DACL on Windows, where the
+	// mode bits are no-ops). The key, database and token are created inside.
+	if err := fsutil.SecureDir(dir); err != nil {
+		return nil, fmt.Errorf("store: state dir permissions: %w", err)
 	}
 	sl, err := loadOrCreateKey(dir)
 	if err != nil {

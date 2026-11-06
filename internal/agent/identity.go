@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openbekci/openbekci-agent/internal/fsutil"
 	"github.com/openbekci/openbekci-agent/internal/store"
 )
 
@@ -52,47 +53,6 @@ func (i Identity) RotateURL() (string, error) {
 	return u.Scheme + "://" + u.Host + "/v1/agent/token:rotate", nil
 }
 
-// writeFileAtomic writes data to path through a temp file in the same
-// directory: write, fsync, rename. A crash leaves either the old or the new
-// file, never a partial one.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	cleanup := func() { _ = os.Remove(tmp) }
-	if err := f.Chmod(perm); err != nil && !isWindows() {
-		_ = f.Close()
-		cleanup()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		cleanup()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		cleanup()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := renameDurable(tmp, path); err != nil {
-		cleanup()
-		return err
-	}
-	// The rename itself must survive a power loss, or the old token comes
-	// back after a rotation.
-	return syncDir(dir)
-}
-
-func isWindows() bool { return filepath.Separator == '\\' }
-
 func readToken(dir string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(dir, TokenFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -109,7 +69,7 @@ func readToken(dir string) (string, error) {
 }
 
 func writeToken(dir, token string) error {
-	return writeFileAtomic(filepath.Join(dir, TokenFile), []byte(token+"\n"), 0o600)
+	return fsutil.WriteFileAtomic(filepath.Join(dir, TokenFile), []byte(token+"\n"), 0o600)
 }
 
 func readIdentity(dir string) (Identity, error) {
@@ -129,7 +89,7 @@ func writeIdentity(dir string, id Identity) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(dir, IdentityFile), b, 0o600)
+	return fsutil.WriteFileAtomic(filepath.Join(dir, IdentityFile), b, 0o600)
 }
 
 // IsRevoked reports whether the state directory carries the revoked marker.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/openbekci/openbekci-agent/internal/config"
+	"github.com/openbekci/openbekci-agent/internal/fsutil"
 	"github.com/openbekci/openbekci-agent/internal/protocol"
 	"github.com/openbekci/openbekci-agent/internal/store"
 	"github.com/openbekci/openbekci-agent/internal/transport"
@@ -71,6 +72,9 @@ func Enrol(ctx context.Context, cfg *config.Config, o EnrolOptions) (Identity, e
 		return Identity{}, fmt.Errorf("enrol: %w", err)
 	}
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		return Identity{}, err
+	}
+	if err := fsutil.SecureDir(cfg.StateDir); err != nil {
 		return Identity{}, err
 	}
 	// Start from an empty store: stale allow-list or queue belong to a former

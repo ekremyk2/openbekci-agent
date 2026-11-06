@@ -1,4 +1,4 @@
-package agent
+package fsutil
 
 import (
 	"os"
@@ -8,9 +8,9 @@ import (
 
 func TestWriteFileAtomicReplacesAndSyncsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, TokenFile)
+	path := filepath.Join(dir, "agent.token")
 	for _, v := range []string{"first", "second"} {
-		if err := writeFileAtomic(path, []byte(v), 0o600); err != nil {
+		if err := WriteFileAtomic(path, []byte(v), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if b, _ := os.ReadFile(path); string(b) != v {
@@ -20,10 +20,10 @@ func TestWriteFileAtomicReplacesAndSyncsDirectory(t *testing.T) {
 	if m, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*")); len(m) != 0 {
 		t.Fatalf("temp files left: %v", m)
 	}
-	if err := syncDir(dir); err != nil {
-		t.Fatalf("syncDir: %v", err)
+	if err := SyncDir(dir); err != nil {
+		t.Fatalf("SyncDir: %v", err)
 	}
-	if err := syncDir(filepath.Join(dir, "missing")); err == nil && os.PathSeparator == '/' {
-		t.Fatal("syncDir of a missing directory must fail where directories can be synced")
+	if err := SyncDir(filepath.Join(dir, "missing")); err == nil && os.PathSeparator == '/' {
+		t.Fatal("SyncDir of a missing directory must fail where directories can be synced")
 	}
 }

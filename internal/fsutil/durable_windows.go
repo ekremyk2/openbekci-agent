@@ -1,12 +1,12 @@
 //go:build windows
 
-package agent
+package fsutil
 
 import "golang.org/x/sys/windows"
 
-// renameDurable replaces path with tmp and does not return before the rename
+// RenameDurable replaces path with tmp and does not return before the rename
 // is on disk (MOVEFILE_WRITE_THROUGH): Windows cannot fsync a directory.
-func renameDurable(tmp, path string) error {
+func RenameDurable(tmp, path string) error {
 	from, err := windows.UTF16PtrFromString(tmp)
 	if err != nil {
 		return err
@@ -18,5 +18,5 @@ func renameDurable(tmp, path string) error {
 	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 }
 
-// syncDir is a no-op on Windows; renameDurable already wrote through.
-func syncDir(string) error { return nil }
+// SyncDir is a no-op on Windows; RenameDurable already wrote through.
+func SyncDir(string) error { return nil }

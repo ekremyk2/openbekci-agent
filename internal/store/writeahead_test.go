@@ -1,7 +1,10 @@
 package store
 
 import (
+	"path/filepath"
+
 	"errors"
+	"github.com/openbekci/openbekci-agent/internal/fsutil"
 	"testing"
 	"time"
 
@@ -98,5 +101,21 @@ func TestDurabilityPragmas(t *testing.T) {
 	var mode string
 	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
 		t.Fatalf("journal_mode %q %v", mode, err)
+	}
+}
+
+// The state directory, key and database are owner-only on every platform (a
+// protected DACL on Windows, mode 0700/0600 elsewhere).
+func TestStateFilesAreOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	if err := s.RecordAllow(ctx, allowEvent(1), time.Now(), "", 0); err != nil { // makes the WAL exist
+		t.Fatal(err)
+	}
+	for _, name := range []string{".", keyFile, DBFile} {
+		p := filepath.Join(dir, name)
+		if ok, err := fsutil.OwnerOnly(p); err != nil || !ok {
+			t.Errorf("%s is not owner-only (ok=%v err=%v)", p, ok, err)
+		}
 	}
 }

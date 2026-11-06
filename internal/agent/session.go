@@ -314,7 +314,7 @@ func (s *sessState) onSnapshot(env protocol.Envelope, m *protocol.Snapshot) erro
 	// replayed message, server bug). It is accepted only when this session's
 	// hello announced exactly that version (a server DB restore) or the
 	// agent asked for a resync; otherwise it is ignored.
-	if m.Version < cur && !s.resync && !(s.helloKnown && m.Version == s.wantSnap) {
+	if m.Version < cur && !s.resync && (!s.helloKnown || m.Version != s.wantSnap) {
 		s.a.log.Warn("ignoring stale snapshot", "have", cur, "snapshot_version", m.Version)
 		s.ack(env.ID, protocol.AckStale, map[string]any{"have_version": cur, "version": m.Version})
 		return nil
