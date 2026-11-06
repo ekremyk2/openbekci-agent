@@ -80,6 +80,16 @@ func Enrol(ctx context.Context, cfg *config.Config, o EnrolOptions) (Identity, e
 	// Start from an empty store: stale allow-list or queue belong to a former
 	// agent. The key file may stay.
 	st, err := store.Open(cfg.StateDir)
+	if errors.Is(err, store.ErrKeyUnusable) {
+		// A new enrolment is a new agent: the unreadable old store (whose key
+		// is gone) is discarded explicitly, on the operator's say-so.
+		for _, name := range []string{store.DBFile, store.DBFile + "-wal", store.DBFile + "-shm", "store.key"} {
+			if rerr := os.Remove(filepath.Join(cfg.StateDir, name)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				return Identity{}, rerr
+			}
+		}
+		st, err = store.Open(cfg.StateDir)
+	}
 	if err != nil {
 		return Identity{}, err
 	}

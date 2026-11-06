@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,5 +263,52 @@ func TestUsesAndWipe(t *testing.T) {
 	}
 	if c, _ := s.LoadConfig(ctx); c != nil {
 		t.Fatal("config survives wipe")
+	}
+}
+
+func TestUnusableKeyIsFatalAndNeverRecreated(t *testing.T) {
+	for name, setup := range map[string]func(dir string){
+		"empty key": func(dir string) { _ = os.WriteFile(filepath.Join(dir, keyFile), nil, 0o600) },
+		"short key": func(dir string) { _ = os.WriteFile(filepath.Join(dir, keyFile), []byte("short"), 0o600) },
+		"missing key with a database": func(dir string) {
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = s.RecordAllow(ctx, allowEvent(1), time.Now(), "", 0)
+			_ = s.Close()
+			if err := os.Remove(filepath.Join(dir, keyFile)); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"unreadable key": func(dir string) { _ = os.Mkdir(filepath.Join(dir, keyFile), 0o700) }, // a directory cannot be read as a file
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			setup(dir)
+			before, _ := os.ReadFile(filepath.Join(dir, keyFile))
+			_, err := Open(dir)
+			if !errors.Is(err, ErrKeyUnusable) {
+				t.Fatalf("Open: %v, want ErrKeyUnusable", err)
+			}
+			if !strings.Contains(err.Error(), "Recovery:") || !strings.Contains(err.Error(), "enrol") {
+				t.Fatalf("error lacks recovery instructions: %v", err)
+			}
+			after, _ := os.ReadFile(filepath.Join(dir, keyFile))
+			if !bytes.Equal(before, after) {
+				t.Fatal("the key file was silently re-created")
+			}
+		})
+	}
+}
+
+func TestKeyIsCreatedAtomicallyForANewStore(t *testing.T) {
+	dir := t.TempDir()
+	open(t, dir)
+	if b, err := os.ReadFile(filepath.Join(dir, keyFile)); err != nil || len(b) != 32 {
+		t.Fatalf("key: %d bytes, %v", len(b), err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*")); len(m) != 0 {
+		t.Fatalf("temp files left behind: %v", m)
 	}
 }
