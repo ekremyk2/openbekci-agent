@@ -40,6 +40,7 @@ const (
 	MetaLastContact     = "last_contact_ms"
 	MetaDropped         = "dropped_events"
 	MetaDriversStatus   = "drivers_status"
+	MetaQuarantined     = "quarantined_since_ms"
 )
 
 const schema = `

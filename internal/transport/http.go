@@ -19,9 +19,14 @@ import (
 
 // Errors of the transport layer.
 var (
-	// ErrRevoked means the server answered 401 or closed with 4401: the agent
-	// credential is no longer valid and must not be retried.
-	ErrRevoked = errors.New("transport: agent token rejected (revoked)")
+	// ErrRevoked means the server authenticated the end of this agent's
+	// life: it closed the WebSocket with 4401 or sent command revoked. Only
+	// this wipes local state.
+	ErrRevoked = errors.New("transport: agent revoked by the server")
+	// ErrUnauthorized is a bare HTTP 401. A WAF, captive portal, proxy or a
+	// server auth-cache miss during a deploy answers it too, so it never
+	// wipes anything: the agent is quarantined and retries.
+	ErrUnauthorized = errors.New("transport: server answered 401 unauthorized")
 	// ErrUpdateRequired means the server closed with 4426: no common protocol
 	// version.
 	ErrUpdateRequired = errors.New("transport: no common protocol version, agent update required")
@@ -90,7 +95,7 @@ func retryAfter(resp *http.Response) time.Duration {
 func statusError(resp *http.Response) error {
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return ErrRevoked
+		return ErrUnauthorized
 	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
 		return &RetryAfterError{Status: resp.StatusCode, After: retryAfter(resp)}
 	}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,6 +84,10 @@ type Agent struct {
 	presentCh   chan driver.Presentation
 
 	rotating atomic.Bool
+	// quarantined is set by a bare HTTP 401: the agent keeps its allow-list
+	// and keeps deciding, stops uploading (it cannot authenticate), and
+	// retries. Any authenticated contact clears it.
+	quarantined atomic.Bool
 }
 
 type instance struct {
@@ -151,6 +156,10 @@ func (a *Agent) notifyFlush() {
 
 // touchContact records an authenticated server contact.
 func (a *Agent) touchContact(ctx context.Context, force bool) {
+	if a.quarantined.CompareAndSwap(true, false) {
+		a.log.Warn("server accepted the agent token again: quarantine lifted")
+		_ = a.st.SetMeta(ctx, store.MetaQuarantined, "")
+	}
 	now := a.now()
 	a.lastContact.Store(now.UnixMilli())
 	last := a.lastPersist.Load()
@@ -224,7 +233,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		Token: func() (string, error) { return readToken(a.cfg.StateDir) },
 		Log:   a.log.With("component", "transport"),
 		// Pongs and empty poll answers are server contact too.
-		OnContact: func() { a.touchContact(ctx, false) },
+		OnContact:      func() { a.touchContact(ctx, false) },
+		OnUnauthorized: func(error) { a.quarantine(ctx) },
 	}
 	if a.o.Transport != nil {
 		a.o.Transport(&to)
@@ -258,8 +268,8 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	switch {
 	case errors.Is(runErr, transport.ErrRevoked):
-		// Any 401 on an authenticated call means revoked: wipe everything.
-		a.log.Warn("server rejected the agent token: revoked; wiping local state")
+		// Only command revoked or close 4401 get here (a bare 401 quarantines).
+		a.log.Warn("server revoked this agent (command revoked / close 4401); wiping local state")
 		closeStore()
 		if err := WipeState(a.cfg.StateDir); err != nil {
 			return fmt.Errorf("wipe state: %w", errors.Join(ErrRevoked, err))
@@ -271,6 +281,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 	return runErr
+}
+
+// quarantine records a bare HTTP 401. It is never a wipe: only an
+// authenticated "revoked" (command or close 4401) is.
+func (a *Agent) quarantine(ctx context.Context) {
+	if a.quarantined.CompareAndSwap(false, true) {
+		a.log.Error("QUARANTINED: the server answered 401 to the agent token; allow-list kept, uploads stopped, retrying authentication until it works or the server revokes this agent explicitly")
+		_ = a.st.SetMeta(ctx, store.MetaQuarantined, strconv.FormatInt(a.now().UnixMilli(), 10))
+	}
 }
 
 // ---- configuration state ----
@@ -599,6 +618,8 @@ type StatusInfo struct {
 	LastContact     time.Time
 	Timezone        string
 	Drivers         []protocol.DriverState
+	// QuarantinedSince is non-zero while the agent cannot authenticate (a bare 401).
+	QuarantinedSince time.Time
 }
 
 // ReadStatus reads the agent's persisted state without running it.
@@ -636,6 +657,11 @@ func ReadStatus(ctx context.Context, dir string) (StatusInfo, error) {
 	s.DroppedEvents, _ = st.DroppedEvents(ctx)
 	s.LastContact, _ = st.LastContact(ctx)
 	s.Timezone, _ = st.Timezone(ctx)
+	if v, ok, _ := st.GetMeta(ctx, store.MetaQuarantined); ok && v != "" {
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
+			s.QuarantinedSince = time.UnixMilli(ms).UTC()
+		}
+	}
 	if raw, ok, _ := st.GetMeta(ctx, store.MetaDriversStatus); ok {
 		_ = json.Unmarshal([]byte(raw), &s.Drivers)
 	}

@@ -82,11 +82,13 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := renameDurable(tmp, path); err != nil {
 		cleanup()
 		return err
 	}
-	return nil
+	// The rename itself must survive a power loss, or the old token comes
+	// back after a rotation.
+	return syncDir(dir)
 }
 
 func isWindows() bool { return filepath.Separator == '\\' }
@@ -144,6 +146,15 @@ func WipeState(dir string) error {
 	for _, name := range []string{store.DBFile, store.DBFile + "-wal", store.DBFile + "-shm", "store.key", TokenFile, IdentityFile} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			errs = append(errs, err)
+		}
+	}
+	// Leftovers of a crashed atomic write still hold a token or identity.
+	for _, pat := range []string{TokenFile + ".tmp-*", IdentityFile + ".tmp-*", "store.key.tmp-*"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pat))
+		for _, m := range matches {
+			if err := os.Remove(m); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
 		}
 	}
 	marker := []byte(time.Now().UTC().Format(time.RFC3339) + "\n")

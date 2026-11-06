@@ -226,10 +226,6 @@ func (s *sessState) maybeRotate(m *protocol.ServerHello) {
 		defer s.wg.Done()
 		defer a.rotating.Store(false)
 		if err := a.rotateToken(s.ctx); err != nil {
-			if errors.Is(err, transport.ErrRevoked) {
-				s.fail(err)
-				return
-			}
 			if s.ctx.Err() == nil {
 				a.log.Error("token rotation failed", "error", err)
 			}
@@ -239,12 +235,45 @@ func (s *sessState) maybeRotate(m *protocol.ServerHello) {
 	}()
 }
 
+// Rotation retry tunables (tests shorten the delay).
+var (
+	rotateRetryBase = 5 * time.Second
+	rotateRetryMax  = 60 * time.Second
+)
+
+// rotateWindow is how long the server keeps the old token valid.
+const rotateWindow = 10 * time.Minute
+
+// rotateToken rotates with the token held at the start. If the response is
+// lost (the server rotated, the agent never saw the new token) the old token
+// is still valid for 10 minutes and rotation is idempotent server side for
+// it, so the call is repeated with the old token until the window closes.
 func (a *Agent) rotateToken(ctx context.Context) error {
-	tok, err := readToken(a.cfg.StateDir)
+	old, err := readToken(a.cfg.StateDir)
 	if err != nil {
 		return err
 	}
-	return rotate(ctx, a.client.HTTPClient(), a.cfg.StateDir, a.id, tok)
+	deadline := time.Now().Add(rotateWindow)
+	delay := rotateRetryBase
+	for {
+		err := rotate(ctx, a.client.HTTPClient(), a.cfg.StateDir, a.id, old)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil || errors.Is(err, transport.ErrUnauthorized) || errors.Is(err, transport.ErrRevoked) || time.Now().Add(delay).After(deadline) {
+			return err
+		}
+		if cur, rerr := readToken(a.cfg.StateDir); rerr == nil && cur != old {
+			return nil // somebody else (rotate-token on the CLI) already replaced it
+		}
+		a.log.Warn("token rotation failed, retrying with the current token", "error", err, "retry_in", delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		delay = min(delay*2, rotateRetryMax)
+	}
 }
 
 // ---- heartbeat ----

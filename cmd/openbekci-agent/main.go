@@ -204,7 +204,7 @@ func statusCmd(load loader) *cobra.Command {
 					"version": version, "agent_id": st.Identity.AgentID, "site_id": st.Identity.SiteID,
 					"snapshot_version": st.SnapshotVersion, "config_version": st.ConfigVersion, "entries": st.Entries,
 					"queue_depth": st.QueueDepth, "dropped_events": st.DroppedEvents, "last_contact": st.LastContact, "timezone": st.Timezone,
-					"drivers": st.Drivers,
+					"drivers": st.Drivers, "quarantined_since": st.QuarantinedSince,
 				})
 			}
 			w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
@@ -219,6 +219,9 @@ func statusCmd(load loader) *cobra.Command {
 				fmt.Fprintf(w, "last contact\tnever\n")
 			} else {
 				fmt.Fprintf(w, "last contact\t%s (%s ago)\n", st.LastContact.Local().Format(time.RFC3339), time.Since(st.LastContact).Round(time.Second))
+			}
+			if !st.QuarantinedSince.IsZero() {
+				fmt.Fprintf(w, "QUARANTINED\tsince %s: the server rejects the agent token (HTTP 401); allow-list kept, uploads stopped, retrying\n", st.QuarantinedSince.Local().Format(time.RFC3339))
 			}
 			for _, d := range st.Drivers {
 				fmt.Fprintf(w, "driver %s\t%s %s\n", d.Instance, d.State, d.Detail)

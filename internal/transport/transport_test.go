@@ -155,16 +155,34 @@ func TestRevokedStopsWithoutRetry(t *testing.T) {
 		t.Fatal("retried after revocation")
 	}
 
-	// A later start gets 401 at the upgrade: revoked too.
-	cancel2, done2 := run(e, forward(t, modes, got))
-	defer cancel2()
+}
+
+// A bare 401 (WAF, captive portal, auth-cache miss) never ends Run and never
+// means revoked: it is reported and retried, and a session resumes once the
+// server accepts the token again.
+func TestBareUnauthorizedIsRetriedNotRevoked(t *testing.T) {
+	var unauth atomic.Int32
+	e := newEnv(t, func(o *Options) {
+		o.UnauthorizedRetry = 50 * time.Millisecond
+		o.OnUnauthorized = func(error) { unauth.Add(1) }
+	})
+	e.fs.RejectAuth(true)
+	modes, got := make(chan string, 8), make(chan protocol.Envelope, 32)
+	cancel, done := run(e, forward(t, modes, got))
+	defer cancel()
+	if !e.fs.Eventually(5*time.Second, func() bool { return unauth.Load() >= 3 }) {
+		t.Fatalf("expected repeated 401 reports, got %d", unauth.Load())
+	}
 	select {
-	case err := <-done2:
-		if !errors.Is(err, ErrRevoked) {
-			t.Fatalf("second run: %v", err)
-		}
+	case err := <-done:
+		t.Fatalf("Run ended on a bare 401: %v", err)
+	default:
+	}
+	e.fs.RejectAuth(false)
+	select {
+	case <-modes:
 	case <-time.After(5 * time.Second):
-		t.Fatal("no 401 handling")
+		t.Fatal("no session after the server accepted the token again")
 	}
 }
 
@@ -275,7 +293,7 @@ func TestEnrolAndRotate(t *testing.T) {
 	if _, err := Rotate(context.Background(), hc, fs.RotateURL(), resp.AgentToken); err != nil {
 		t.Fatalf("old token inside grace: %v", err)
 	}
-	if _, err := Rotate(context.Background(), hc, fs.RotateURL(), "obk_agt_bogus"); !errors.Is(err, ErrRevoked) {
+	if _, err := Rotate(context.Background(), hc, fs.RotateURL(), "obk_agt_bogus"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("bogus token: %v", err)
 	}
 }

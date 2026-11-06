@@ -66,7 +66,7 @@ func (c *Client) dialWS(ctx context.Context) (Session, error) {
 			defer func() { _ = resp.Body.Close() }()
 			switch resp.StatusCode {
 			case http.StatusUnauthorized:
-				return nil, ErrRevoked
+				return nil, ErrUnauthorized
 			case http.StatusTooManyRequests, http.StatusServiceUnavailable:
 				return nil, &RetryAfterError{Status: resp.StatusCode, After: retryAfter(resp)}
 			}

@@ -573,16 +573,92 @@ func TestRevocationWipesState(t *testing.T) {
 	}
 }
 
-func TestUnauthorizedAtConnectIsRevoked(t *testing.T) {
+// A bare 401 quarantines the agent: nothing is wiped, it keeps deciding from
+// its allow-list, and it recovers by itself when the server accepts it again.
+func TestBareUnauthorizedQuarantinesAndNeverWipes(t *testing.T) {
 	h := newHarness(t)
-	h.fs.Revoke() // revoked while the agent was down
+	h.tune = func(o *transport.Options) { o.UnauthorizedRetry = 50 * time.Millisecond }
+	h.fs.Upsert(h.entry("34ABC123", nil))
 	r := h.start()
+	h.waitSynced()
+	_, _, _, before := h.fs.Counters()
+
+	h.fs.RejectAuth(true)
+	h.fs.DropConnection()
+	waitFor(t, 10*time.Second, "quarantine", func() bool { return !h.status().QuarantinedSince.IsZero() })
+	if _, done := r.wait(t, 500*time.Millisecond); done {
+		t.Fatal("Run ended on a bare 401")
+	}
+	for _, f := range []string{TokenFile, IdentityFile, "store.db", "store.key"} {
+		if _, err := os.Stat(filepath.Join(h.cfg.StateDir, f)); err != nil {
+			t.Fatalf("%s must survive a bare 401: %v", f, err)
+		}
+	}
+	if IsRevoked(h.cfg.StateDir) {
+		t.Fatal("a bare 401 must not leave the revoked marker")
+	}
+	// Still deciding offline from the kept allow-list.
+	h.present("34ABC123")
+	waitFor(t, 5*time.Second, "offline decision", func() bool { return len(h.mock().Opens()) == 1 })
+	if h.status().SnapshotVersion == 0 {
+		t.Fatal("allow-list lost")
+	}
+
+	h.fs.RejectAuth(false)
+	h.waitConnected(before + 1)
+	waitFor(t, 5*time.Second, "quarantine lifted", func() bool { return h.status().QuarantinedSince.IsZero() })
+	waitFor(t, 10*time.Second, "queued event delivered after recovery", func() bool { return len(h.fs.Events()) == 1 })
+}
+
+// Close code 4401 alone (no command) is an authenticated revocation: wipe.
+func TestClose4401WipesState(t *testing.T) {
+	h := newHarness(t)
+	r := h.start()
+	h.waitSynced()
+	h.fs.CloseWith(protocol.CloseRevoked, "revoked")
 	err, ok := r.wait(t, 10*time.Second)
 	if !ok || !errors.Is(err, ErrRevoked) {
 		t.Fatalf("run: %v (stopped=%v)", err, ok)
 	}
 	if _, err := os.Stat(filepath.Join(h.cfg.StateDir, TokenFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("token survived a 401")
+		t.Fatal("token survived revocation")
+	}
+}
+
+// If the rotate response is lost, the agent still holds the old token; it must
+// retry rotation with it inside the 10 minute window and end up with the new one.
+func TestRotationRetriesWithOldTokenWhenResponseIsLost(t *testing.T) {
+	old := rotateRetryBase
+	rotateRetryBase = 20 * time.Millisecond
+	t.Cleanup(func() { rotateRetryBase = old })
+	h := newHarness(t)
+	h.fs.DropRotateResponses(1)
+	h.start()
+	h.waitConnected(1)
+	oldTok, _ := readToken(h.cfg.StateDir)
+	h.fs.ForceRotate()
+	h.fs.DropConnection()
+	waitFor(t, 10*time.Second, "token file holds the server's current token", func() bool {
+		tok, err := readToken(h.cfg.StateDir)
+		return err == nil && tok == h.fs.CurrentToken() && tok != oldTok
+	})
+	if h.fs.Rotations() != 1 {
+		t.Fatalf("server rotated %d times, want exactly 1 (the retry is idempotent)", h.fs.Rotations())
+	}
+}
+
+func TestWipeStateRemovesTempLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{TokenFile + ".tmp-123", IdentityFile + ".tmp-9", TokenFile} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WipeState(dir); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "agent.*")); len(m) != 0 {
+		t.Fatalf("leftovers after wipe: %v", m)
 	}
 }
 
@@ -632,7 +708,7 @@ func TestRotateTokenCommandLine(t *testing.T) {
 		t.Fatalf("token %q old %q server %q", cur, old, h.fs.CurrentToken())
 	}
 	h.fs.Revoke()
-	if err := RotateToken(context.Background(), h.cfg); !errors.Is(err, transport.ErrRevoked) {
+	if err := RotateToken(context.Background(), h.cfg); !errors.Is(err, transport.ErrUnauthorized) {
 		t.Fatalf("revoked rotate: %v", err)
 	}
 }

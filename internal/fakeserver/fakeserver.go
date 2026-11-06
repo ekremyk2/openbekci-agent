@@ -42,6 +42,8 @@ type Server struct {
 	token, prevToken       string
 	prevExpiry             time.Time
 	revoked                bool
+	rejectAuth             bool // answer 401 to every authenticated request without revoking
+	dropRotate             int  // rotate n times but lose the response
 	enrolments             []protocol.EnrolRequest
 
 	// tuning (set before or during a test)
@@ -207,7 +209,7 @@ func (s *Server) authorized(r *http.Request) bool {
 	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.revoked || tok == "" {
+	if s.revoked || s.rejectAuth || tok == "" {
 		return false
 	}
 	return tok == s.token || (tok == s.prevToken && s.Now().Before(s.prevExpiry))
@@ -404,6 +406,24 @@ func (s *Server) Revoke() {
 		// give the writer goroutine a moment to flush the command first
 		time.Sleep(50 * time.Millisecond)
 		live.close(protocol.CloseRevoked, "revoked")
+	}
+}
+
+// RejectAuth makes the server answer a bare 401 to every authenticated request
+// (what a WAF or a deploy-time auth-cache miss does) without revoking the agent.
+func (s *Server) RejectAuth(v bool) { s.mu.Lock(); s.rejectAuth = v; s.mu.Unlock() }
+
+// DropRotateResponses makes the next n rotations take effect on the server but
+// lose the response on the wire.
+func (s *Server) DropRotateResponses(n int) { s.mu.Lock(); s.dropRotate = n; s.mu.Unlock() }
+
+// CloseWith closes the live WebSocket with the given close code and nothing else.
+func (s *Server) CloseWith(code int, reason string) {
+	s.mu.Lock()
+	live := s.live
+	s.mu.Unlock()
+	if live != nil {
+		live.close(code, reason)
 	}
 }
 
@@ -697,12 +717,28 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	s.mu.Lock()
+	if presented == s.prevToken && presented != s.token {
+		// Idempotent per the design: the retired token inside its 10 minute
+		// window gets the token its rotation already produced.
+		tok := s.token
+		s.mu.Unlock()
+		writeJSON(w, protocol.RotateResponse{AgentToken: tok})
+		return
+	}
 	s.prevToken, s.prevExpiry = s.token, s.Now().Add(10*time.Minute)
 	s.token = s.newAgentToken()
 	s.rotations++
 	tok := s.token
+	lose := s.dropRotate > 0
+	if lose {
+		s.dropRotate--
+	}
 	s.mu.Unlock()
+	if lose {
+		panic(http.ErrAbortHandler) // the response never reaches the agent
+	}
 	writeJSON(w, protocol.RotateResponse{AgentToken: tok})
 }
 

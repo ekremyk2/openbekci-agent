@@ -36,7 +36,8 @@ type Session interface {
 }
 
 // Handler runs one session. Returning ends it; the client reconnects unless the
-// error is ErrRevoked or the context is done.
+// error is ErrRevoked or the context is done. ErrUnauthorized makes the client
+// wait UnauthorizedRetry and try again.
 type Handler func(ctx context.Context, s Session) error
 
 // Options configure a Client.
@@ -67,6 +68,11 @@ type Options struct {
 	// authenticated us: a successful WebSocket ping/pong and every 2xx
 	// long-poll answer, including empty ones.
 	OnContact func()
+	// UnauthorizedRetry is how long to wait after a bare 401 before trying
+	// again (default 60 s). The token file is re-read for every attempt.
+	UnauthorizedRetry time.Duration
+	// OnUnauthorized is told about every bare 401.
+	OnUnauthorized func(err error)
 	// OnModeChange is told when the client falls back to or leaves long-poll.
 	OnModeChange func(mode string)
 }
@@ -103,6 +109,9 @@ func NewClient(o Options) (*Client, error) {
 	if o.PollWait == 0 {
 		o.PollWait = 25
 	}
+	if o.UnauthorizedRetry == 0 {
+		o.UnauthorizedRetry = 60 * time.Second
+	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
@@ -123,7 +132,8 @@ func (c *Client) contact() {
 func (c *Client) HTTPClient() *http.Client { return c.hc }
 
 // Run connects, runs h for each session, and reconnects with backoff until ctx
-// ends (returning ctx.Err()) or the token is rejected (ErrRevoked).
+// ends (returning ctx.Err()) or the server revokes the agent (ErrRevoked). A
+// bare 401 never ends it: it is reported and retried every UnauthorizedRetry.
 func (c *Client) Run(ctx context.Context, h Handler) error {
 	var (
 		bo        = c.o.Backoff
@@ -156,6 +166,12 @@ func (c *Client) Run(ctx context.Context, h Handler) error {
 			release()
 			if errors.Is(err, ErrRevoked) {
 				return err
+			}
+			if errors.Is(err, ErrUnauthorized) {
+				if !c.unauthorized(ctx, err) {
+					return ctx.Err()
+				}
+				continue
 			}
 			if isProxyLike(err) {
 				proxyFail++
@@ -199,6 +215,12 @@ func (c *Client) Run(ctx context.Context, h Handler) error {
 		case ctx.Err() != nil:
 			return ctx.Err()
 		}
+		if errors.Is(herr, ErrUnauthorized) {
+			if !c.unauthorized(ctx, herr) {
+				return ctx.Err()
+			}
+			continue
+		}
 		if time.Since(start) >= c.o.HealthyAfter {
 			bo.Reset()
 		}
@@ -207,6 +229,16 @@ func (c *Client) Run(ctx context.Context, h Handler) error {
 			return ctx.Err()
 		}
 	}
+}
+
+// unauthorized reports a bare 401 and waits UnauthorizedRetry; false when ctx
+// ended first.
+func (c *Client) unauthorized(ctx context.Context, err error) bool {
+	c.o.Log.Error("server rejected the agent token (HTTP 401); not treating it as revocation, retrying", "retry_in", c.o.UnauthorizedRetry)
+	if c.o.OnUnauthorized != nil {
+		c.o.OnUnauthorized(err)
+	}
+	return c.sleep(ctx, c.o.UnauthorizedRetry)
 }
 
 // delay is the next backoff, stretched to honour Retry-After.
