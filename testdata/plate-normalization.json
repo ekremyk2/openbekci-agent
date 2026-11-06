@@ -1,0 +1,14 @@
+[
+  {"input": "34 ABC 123", "normalized": "34ABC123"},
+  {"input": "34-abc-123", "normalized": "34ABC123"},
+  {"input": "06 ş 4444", "normalized": "06S4444"},
+  {"input": "34 ABC 12", "normalized": "34ABC12"},
+  {"input": "34 abc 123.", "normalized": "34ABC123"},
+  {"input": "  34_ABC_123  ", "normalized": "34ABC123"},
+  {"input": "34 İĞÜ 123", "normalized": "34IGU123"},
+  {"input": "34 ığü 123", "normalized": "34IGU123"},
+  {"input": "34 çöş 99", "normalized": "34COS99"},
+  {"input": "３４ＡＢＣ１２３", "normalized": "34ABC123"},
+  {"input": "---", "normalized": null},
+  {"input": "", "normalized": null}
+]
