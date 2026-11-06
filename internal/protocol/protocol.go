@@ -52,6 +52,9 @@ const (
 	AckUnknownPoint = "unknown_point"
 	AckUnsupported  = "unsupported"
 	AckError        = "error"
+	// AckStale answers a snapshot older than the stored allow-list that the
+	// agent did not ask for; it is ignored (design 4.7 needs this status).
+	AckStale = "stale"
 )
 
 // WebSocket close codes.
@@ -552,7 +555,7 @@ func (a Ack) Validate() error {
 		return errors.New("ack: invalid ref")
 	}
 	switch a.Status {
-	case AckOK, AckDuplicate, AckGap, AckDone, AckFailed, AckExpired, AckRefused, AckUnknownPoint, AckUnsupported, AckError:
+	case AckOK, AckDuplicate, AckGap, AckDone, AckFailed, AckExpired, AckRefused, AckUnknownPoint, AckUnsupported, AckError, AckStale:
 	default:
 		return fmt.Errorf("ack: invalid status %q", a.Status)
 	}

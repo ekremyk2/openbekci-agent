@@ -40,6 +40,10 @@ type sessState struct {
 	wantSnap   int64
 	wantCfg    int64
 	helloKnown bool
+	// resync is set when this session asked for (acked gap) or was told to
+	// apply (command request_snapshot) a replacement snapshot; it lets one
+	// snapshot with a LOWER version through. Receive-loop goroutine only.
+	resync bool
 
 	mu        sync.Mutex
 	inflight  map[string]inflightBatch
@@ -301,6 +305,20 @@ func (s *sessState) heartbeats(every time.Duration) {
 // ---- snapshot / delta ----
 
 func (s *sessState) onSnapshot(env protocol.Envelope, m *protocol.Snapshot) error {
+	cur, err := s.a.st.SnapshotVersion(s.ctx)
+	if err != nil {
+		s.ack(env.ID, protocol.AckError, map[string]string{"reason": "store error"})
+		return err
+	}
+	// A lower version can resurrect revoked credentials (lagging replica,
+	// replayed message, server bug). It is accepted only when this session's
+	// hello announced exactly that version (a server DB restore) or the
+	// agent asked for a resync; otherwise it is ignored.
+	if m.Version < cur && !s.resync && !(s.helloKnown && m.Version == s.wantSnap) {
+		s.a.log.Warn("ignoring stale snapshot", "have", cur, "snapshot_version", m.Version)
+		s.ack(env.ID, protocol.AckStale, map[string]any{"have_version": cur, "version": m.Version})
+		return nil
+	}
 	applied, err := s.a.st.ApplySnapshotPart(s.ctx, *m)
 	if err != nil {
 		s.ack(env.ID, protocol.AckError, map[string]string{"reason": "store error"})
@@ -308,6 +326,7 @@ func (s *sessState) onSnapshot(env protocol.Envelope, m *protocol.Snapshot) erro
 	}
 	s.ack(env.ID, protocol.AckOK, map[string]any{"version": m.Version, "part": m.Part, "applied": applied})
 	if applied {
+		s.resync = false
 		s.a.log.Info("snapshot applied", "version", m.Version, "parts", m.Parts)
 		s.a.refreshSettings(s.ctx)
 		s.checkReady()
@@ -328,6 +347,7 @@ func (s *sessState) onDelta(env protocol.Envelope, m *protocol.Delta) error {
 	case store.DeltaDuplicate:
 		s.ack(env.ID, protocol.AckDuplicate, map[string]any{"have_version": have})
 	default:
+		s.resync = true
 		s.a.log.Warn("allow-list gap, asking for a snapshot", "have", have, "delta_from", m.FromVersion)
 		s.ack(env.ID, protocol.AckGap, map[string]any{"have_version": have})
 	}

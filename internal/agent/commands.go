@@ -29,6 +29,7 @@ func (s *sessState) onCommand(env protocol.Envelope, c *protocol.Command) error 
 		s.ack(env.ID, protocol.AckOK, map[string]any{"removed": removed})
 	case protocol.CmdRequestSnapshot:
 		// Snapshots always replace the store; the server follows up with one.
+		s.resync = true
 		s.ack(env.ID, protocol.AckOK, nil)
 	case protocol.CmdUpdateConfig:
 		return s.updateConfig(env, c)
