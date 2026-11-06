@@ -219,6 +219,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		WSURL: a.id.WSURL, PollURL: a.id.PollURL, CAFile: a.cfg.CAFile,
 		Token: func() (string, error) { return readToken(a.cfg.StateDir) },
 		Log:   a.log.With("component", "transport"),
+		// Pongs and empty poll answers are server contact too.
+		OnContact: func() { a.touchContact(ctx, false) },
 	}
 	if a.o.Transport != nil {
 		a.o.Transport(&to)

@@ -704,3 +704,37 @@ func TestWiringOpensThroughSeparateInstance(t *testing.T) {
 		t.Fatalf("reader opens %d, relay opens %+v", len(reader.Opens()), relay.Opens())
 	}
 }
+
+// A connected agent on a site with no deltas, commands or events must not go
+// stopped: pongs (WebSocket) and empty 2xx poll answers are server contact.
+func TestQuietServerStaysRunningWebSocket(t *testing.T) {
+	h := newHarness(t)
+	h.fs.Upsert(h.entry("34ABC123", nil))
+	h.start()
+	h.waitSynced()
+	hbBefore := len(h.fs.Heartbeats())
+	h.shift.Add(int64(73 * time.Hour)) // 73 h of fake clock, the server says nothing
+	waitFor(t, 5*time.Second, "heartbeats on the shifted clock", func() bool { return len(h.fs.Heartbeats()) >= hbBefore+3 })
+	h.present("34ABC123")
+	waitFor(t, 5*time.Second, "decision", func() bool { return h.status().QueueDepth >= 1 || len(h.fs.Events()) >= 1 })
+	if n := len(h.mock().Opens()); n != 1 {
+		t.Fatalf("connected agent on a quiet server must stay running, got %d opens", n)
+	}
+}
+
+func TestQuietServerStaysRunningLongPoll(t *testing.T) {
+	h := newHarness(t)
+	h.tune = func(o *transport.Options) { o.WSRetry = time.Hour }
+	h.fs.FailUpgrades(-1)
+	h.fs.Upsert(h.entry("34ABC123", nil))
+	h.start()
+	h.waitSynced()
+	h.shift.Add(int64(73 * time.Hour))
+	// Two full empty polls (PollWait 1 s) happen on the shifted clock.
+	time.Sleep(2500 * time.Millisecond)
+	h.present("34ABC123")
+	waitFor(t, 5*time.Second, "decision", func() bool { return h.status().QueueDepth >= 1 || len(h.fs.Events()) >= 1 })
+	if n := len(h.mock().Opens()); n != 1 {
+		t.Fatalf("long-poll agent on a quiet server must stay running, got %d opens", n)
+	}
+}

@@ -63,6 +63,10 @@ type Options struct {
 	PollWait int
 
 	Log *slog.Logger
+	// OnContact is called for every sign that the server is alive and
+	// authenticated us: a successful WebSocket ping/pong and every 2xx
+	// long-poll answer, including empty ones.
+	OnContact func()
 	// OnModeChange is told when the client falls back to or leaves long-poll.
 	OnModeChange func(mode string)
 }
@@ -107,6 +111,12 @@ func NewClient(o Options) (*Client, error) {
 		return nil, err
 	}
 	return &Client{o: o, hc: hc}, nil
+}
+
+func (c *Client) contact() {
+	if c.o.OnContact != nil {
+		c.o.OnContact()
+	}
 }
 
 // HTTPClient returns the verified-TLS client for plain HTTP calls.

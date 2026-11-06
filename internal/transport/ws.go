@@ -43,8 +43,9 @@ func isProxyLike(err error) bool {
 }
 
 type wsSession struct {
-	conn *websocket.Conn
-	log  interface{ Warn(string, ...any) }
+	conn    *websocket.Conn
+	log     interface{ Warn(string, ...any) }
+	contact func()
 }
 
 func (c *Client) dialWS(ctx context.Context) (Session, error) {
@@ -82,7 +83,7 @@ func (c *Client) dialWS(ctx context.Context) (Session, error) {
 		return nil, fmt.Errorf("transport: server did not select subprotocol %s", protocol.Subprotocol)
 	}
 	conn.SetReadLimit(protocol.MaxFrameBytes + 4096)
-	return &wsSession{conn: conn, log: c.o.Log}, nil
+	return &wsSession{conn: conn, log: c.o.Log, contact: c.contact}, nil
 }
 
 func (s *wsSession) Mode() string { return ModeWebSocket }
@@ -127,7 +128,14 @@ func (s *wsSession) Receive(ctx context.Context) (protocol.Envelope, error) {
 	}
 }
 
-func (s *wsSession) Ping(ctx context.Context) error { return s.conn.Ping(ctx) }
+// Ping sends a WebSocket ping; the answering pong is proof of contact.
+func (s *wsSession) Ping(ctx context.Context) error {
+	if err := s.conn.Ping(ctx); err != nil {
+		return err
+	}
+	s.contact()
+	return nil
+}
 
 func (s *wsSession) Close(code int, reason string) error {
 	if code < 1000 {

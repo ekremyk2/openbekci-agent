@@ -61,6 +61,7 @@ func (p *pollSession) exchange(ctx context.Context, msgs []protocol.Envelope, wa
 	if err := doJSON(rctx, p.c.hc, p.c.o.PollURL, tok, protocol.Poll{Messages: msgs, WaitSeconds: wait}, &resp); err != nil {
 		return nil, err
 	}
+	p.c.contact() // any 2xx answer, even an empty one, is contact
 	return resp.Messages, nil
 }
 
