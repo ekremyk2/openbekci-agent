@@ -69,6 +69,16 @@ func TestCLIEnrolStatusRotateAndCheck(t *testing.T) {
 	if _, err = execute(t, "--config", bad, "config", "check"); err == nil || !strings.Contains(err.Error(), "unknown type") {
 		t.Fatalf("unknown driver type: %v", err)
 	}
+	// The mock driver is not a production driver: `type: mock` is a startup error.
+	_ = os.WriteFile(bad, []byte("drivers:\n  - name: m\n    type: mock\n"), 0o600)
+	if _, err = execute(t, "--config", bad, "config", "check"); err == nil || !strings.Contains(err.Error(), "run --mock") {
+		t.Fatalf("type mock in agent.yaml: %v", err)
+	}
+	t.Setenv("OPENBEKCI_AGENT_STATE_DIR", t.TempDir())
+	if _, err = execute(t, "--config", bad, "run"); err == nil || !strings.Contains(err.Error(), "run --mock") {
+		t.Fatalf("run with type mock: %v", err)
+	}
+	t.Setenv("OPENBEKCI_AGENT_STATE_DIR", filepath.Join(dir, "state"))
 	_ = os.WriteFile(bad, []byte("bogus_key: 1\n"), 0o600)
 	if _, err = execute(t, "--config", bad, "config", "check"); err == nil {
 		t.Fatal("unknown config keys must be rejected")

@@ -179,6 +179,9 @@ func (c *Config) Validate(knownTypes []string) error {
 				ok = ok || k == d.Type
 			}
 			if !ok {
+				if d.Type == "mock" {
+					return fmt.Errorf("drivers[%d] (%s): type mock is not a production driver (it would open gates without hardware); use `openbekci-agent run --mock` for demos and tests", i, d.Name)
+				}
 				return fmt.Errorf("drivers[%d] (%s): unknown type %q (known: %s)", i, d.Name, d.Type, strings.Join(knownTypes, ", "))
 			}
 		}

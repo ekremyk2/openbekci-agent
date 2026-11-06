@@ -62,19 +62,6 @@ type Driver struct {
 	boundTo  chan string // receives the listen address once bound (tests)
 }
 
-// Registration registers the "mock" driver type.
-var Registration = driver.Registration{
-	Type: "mock",
-	New: func(name string, cfg map[string]any, log *slog.Logger) (driver.Driver, error) {
-		var c Config
-		if err := driver.DecodeConfig(cfg, &c); err != nil {
-			return nil, err
-		}
-		return New(name, c, log)
-	},
-	Schema: `{"type":"object","additionalProperties":false,"properties":{"script":{"type":"string"},"loop":{"type":"boolean"},"listen":{"type":"string"},"open_log":{"type":"string"},"fail_open":{"type":"boolean"},"open_delay_ms":{"type":"integer","minimum":0}}}`,
-}
-
 // New creates a mock driver instance.
 func New(name string, cfg Config, log *slog.Logger) (*Driver, error) {
 	if log == nil {

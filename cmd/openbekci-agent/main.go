@@ -153,7 +153,11 @@ func runCmd(load loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := cfg.Validate(driverTypes()); err != nil {
+			types := driverTypes()
+			if useMock {
+				types = nil // --mock ignores the configured drivers entirely
+			}
+			if err := cfg.Validate(types); err != nil {
 				return err
 			}
 			log, err := newLogger(cfg)

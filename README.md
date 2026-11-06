@@ -65,7 +65,7 @@ Hardware is declared under `drivers:` in `agent.yaml`; the server's access point
 |---|---|---|
 | `relay` | open | Pulse = on, wait `pulse_ms` (100-10 000, default 800), off; **off is always attempted**, also on cancellation and panic. `min_interval_ms` (default 2 000) refuses a second pulse too soon; a pulse in progress refuses another. Modes: `http` (Shelly Gen1 `.../relay/0?turn=on&timer=1`, Gen2 RPC, or any URL pair; LAN/private addresses only; omit `off_url` when the device resets itself), `serial` (hex frames per channel written to the device file; the line speed is **not** configured by the agent in this release), `gpio` (config is validated, switching is a stub that reports an error) |
 | `platecam` | read | Only the `mock` adapter exists; the brand adapter is added once the first site's camera is known. Reads below `confidence_min` (0.80) become `deny / unknown` without acting; the same plate on the same lane within `dedupe_s` (30 s) is ignored |
-| `mock` | both | For tests and demos |
+| `mock` | both | Not a configurable driver type (`type: mock` in `agent.yaml` is a startup error): it is only wired by `run --mock`, for tests and demos, and shows up as instance `mock` in the heartbeat |
 
 Adding a driver is one line in `cmd/openbekci-agent/drivers.go` (an explicit slice, no `init()` side effects) plus a package under `internal/driver/`.
 

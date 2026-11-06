@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/openbekci/openbekci-agent/internal/driver"
-	"github.com/openbekci/openbekci-agent/internal/driver/mock"
 	"github.com/openbekci/openbekci-agent/internal/driver/platecam"
 	"github.com/openbekci/openbekci-agent/internal/driver/relay"
 )
@@ -12,7 +11,6 @@ import (
 var Drivers = []driver.Registration{
 	relay.Registration,
 	platecam.Registration,
-	mock.Registration,
 }
 
 func driverTypes() []string {
