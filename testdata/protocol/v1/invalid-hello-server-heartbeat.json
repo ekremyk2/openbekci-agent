@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "from": "server",
+    "protocol_version": 1,
+    "server_time": "2026-11-07T10:00:00.500Z",
+    "heartbeat_seconds": 5,
+    "config_version": 7,
+    "site": {
+      "id": "0192f1a0-0000-7000-8000-0000000000a5",
+      "timezone": "Europe/Istanbul"
+    },
+    "snapshot_version": 1042
+  }
+}

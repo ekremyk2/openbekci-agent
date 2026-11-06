@@ -1,0 +1,10 @@
+/dist/
+/bin/
+*.exe
+*.test
+*.db
+*.db-wal
+*.db-shm
+agent.yaml
+!deploy/agent.example.yaml
+.claude/
