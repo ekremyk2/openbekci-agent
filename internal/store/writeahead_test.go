@@ -85,3 +85,18 @@ func TestRevertAndDiscardHeld(t *testing.T) {
 		t.Fatalf("depth %d", d)
 	}
 }
+
+func TestDurabilityPragmas(t *testing.T) {
+	s := open(t, t.TempDir())
+	var sync int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&sync); err != nil {
+		t.Fatal(err)
+	}
+	if sync != 2 { // 2 = FULL
+		t.Fatalf("PRAGMA synchronous = %d, want 2 (FULL): WAL+NORMAL loses commits on power loss", sync)
+	}
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
+		t.Fatalf("journal_mode %q %v", mode, err)
+	}
+}

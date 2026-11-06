@@ -54,6 +54,7 @@ type Driver struct {
 	log  *slog.Logger
 
 	mu       sync.Mutex
+	hook     func(ctx context.Context, channel string) error
 	opens    []OpenRecord
 	failOpen bool
 	script   []ScriptItem
@@ -138,8 +139,25 @@ func (d *Driver) ListenAddr(ctx context.Context) (string, error) {
 	}
 }
 
+// SetOpenHook installs a function that runs at the start of every Open, while
+// the "pulse" is in progress; it may block, inspect state or fail the open.
+// Tests use it to look at the system mid-pulse.
+func (d *Driver) SetOpenHook(h func(ctx context.Context, channel string) error) {
+	d.mu.Lock()
+	d.hook = h
+	d.mu.Unlock()
+}
+
 // Open records the open and fails or delays as configured.
 func (d *Driver) Open(ctx context.Context, channel string) error {
+	d.mu.Lock()
+	hook := d.hook
+	d.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, channel); err != nil {
+			return err
+		}
+	}
 	if d.cfg.OpenDelayMS > 0 {
 		select {
 		case <-time.After(time.Duration(d.cfg.OpenDelayMS) * time.Millisecond):

@@ -82,7 +82,11 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the store in dir. dir is created with mode
-// 0700 when missing.
+// 0700 when missing. The database runs in WAL mode with synchronous=FULL: in
+// WAL mode NORMAL does not fsync on commit, so a power loss (the realistic
+// crash on an SD card) could lose the provisional command record, the use
+// count or queued events and let a gate open twice. Writes are a few per
+// minute, so FULL costs nothing that matters.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("store: state dir: %w", err)
@@ -92,7 +96,7 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	path := filepath.ToSlash(filepath.Join(dir, DBFile))
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

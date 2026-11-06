@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,5 +99,59 @@ func TestSingleUseCredentialIsSpentBeforeThePulse(t *testing.T) {
 	waitFor(t, 5*time.Second, "second event", func() bool { return len(h.fs.Events()) == 2 })
 	if e := h.fs.Events()[1]; e.Decision != "deny" || e.Reason != "used_up" || len(m.Opens()) != 0 {
 		t.Fatalf("single-use credential reused after restart: %+v opens=%d", e, len(m.Opens()))
+	}
+}
+
+// The provisional failed/interrupted record (and the held event) must already
+// be on disk, visible to another connection, before the pulse starts.
+func TestProvisionalRecordIsOnDiskBeforeThePulse(t *testing.T) {
+	h := newHarness(t)
+	h.start()
+	h.waitSynced()
+	type seen struct {
+		provisional string
+		queued      int
+		err         error
+	}
+	got := make(chan seen, 1)
+	h.mock().SetOpenHook(func(ctx context.Context, _ string) error {
+		var s seen
+		db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(h.cfg.StateDir, store.DBFile))+"?mode=ro&_pragma=busy_timeout(5000)")
+		if err != nil {
+			s.err = err
+		} else {
+			defer func() { _ = db.Close() }()
+			s.err = db.QueryRowContext(ctx, `SELECT coalesce(max(result), '') FROM command_seen`).Scan(&s.provisional)
+			if s.err == nil {
+				s.err = db.QueryRowContext(ctx, `SELECT count(*) FROM queue WHERE decision = 'manual_open'`).Scan(&s.queued)
+			}
+		}
+		select {
+		case got <- s:
+		default:
+		}
+		return nil
+	})
+	id := h.fs.IssueOpen(pointID, 30*time.Second)
+	waitFor(t, 5*time.Second, "done", func() bool { r, ok := h.fs.CommandResult(id); return ok && r.Status == protocol.AckDone })
+	s := <-got
+	if s.err != nil {
+		t.Fatal(s.err)
+	}
+	if !strings.Contains(s.provisional, protocol.AckFailed) || !strings.Contains(s.provisional, "interrupted") {
+		t.Fatalf("provisional record before the pulse = %q, want failed/interrupted", s.provisional)
+	}
+	if s.queued != 1 {
+		t.Fatalf("manual_open event rows before the pulse = %d, want 1", s.queued)
+	}
+	// After the pulse the same row says done.
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(h.cfg.StateDir, store.DBFile))+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var final string
+	if err := db.QueryRowContext(context.Background(), `SELECT result FROM command_seen WHERE id = ?`, id).Scan(&final); err != nil || !strings.Contains(final, protocol.AckDone) {
+		t.Fatalf("final record %q %v", final, err)
 	}
 }
