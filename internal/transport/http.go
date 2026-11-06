@@ -74,7 +74,13 @@ func NewHTTPClient(caFile string) (*http.Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	tr.TLSHandshakeTimeout = 10 * time.Second
-	return &http.Client{Transport: tr}, nil
+	return &http.Client{
+		Transport: tr,
+		// Agent endpoints never redirect. Following one would re-send the
+		// bearer token (to a plaintext http:// URL, to another host), so every
+		// redirect is refused and surfaces as an unexpected status.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 func retryAfter(resp *http.Response) time.Duration {
