@@ -3,12 +3,16 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openbekci/openbekci-agent/internal/protocol"
+	"github.com/openbekci/openbekci-agent/internal/store"
 )
 
 // Plate matching modes.
@@ -28,9 +32,17 @@ type Store interface {
 	Lookup(ctx context.Context, kind, value string) ([]protocol.Entry, error)
 	ListByKind(ctx context.Context, kind string) ([]protocol.Entry, error)
 	Uses(ctx context.Context, id string) (int, error)
-	IncUses(ctx context.Context, id string) error
 	Enqueue(ctx context.Context, ev protocol.Event, now time.Time) (int, error)
+	// RecordAllow commits the held allow event and the spent use in one
+	// transaction (store.ErrUsedUp when the budget is gone).
+	RecordAllow(ctx context.Context, ev protocol.Event, now time.Time, usesID string, maxUses int) error
+	ReleaseHeld(ctx context.Context, eventID string) error
+	RevertHeld(ctx context.Context, eventID, reason, usesID string) error
 }
+
+// settleTimeout bounds the bookkeeping after a pulse; it runs detached from
+// the caller's context so a shutdown mid-pulse still settles the event.
+const settleTimeout = 5 * time.Second
 
 // Settings are the evaluation settings that come from the server.
 type Settings struct {
@@ -82,7 +94,16 @@ type Engine struct {
 	mu sync.Mutex // guards settings and the dedupe table
 	s  Settings
 	dd map[string]time.Time
+
+	lost atomic.Int64
 }
+
+// LostEvents counts decisions that could not be recorded (and therefore did
+// not open anything); it is reported in the heartbeat.
+func (e *Engine) LostEvents() int64 { return e.lost.Load() }
+
+// CountLost records an unrecordable decision made outside Handle.
+func (e *Engine) CountLost() { e.lost.Add(1) }
 
 // New creates an engine with UTC, 72 h grace and exact plate matching.
 func New(o Options) *Engine {
@@ -233,25 +254,49 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 		ev.CredentialID = matched.ID
 	}
 
+	ev.Detail = detail(p, tolerant)
 	opened := false
+	queued := false
 	if ev.Decision == protocol.DecisionAllow {
-		if err := e.open(ctx, p.PointID); err != nil {
-			e.o.Log.Warn("open failed", "point_id", p.PointID, "error", err)
-			ev.Decision, reason = protocol.DecisionDeny, ReasonDriverError
-		} else {
-			opened = true
-			if matched.MaxUses != nil {
-				if err := e.o.Store.IncUses(ctx, matched.ID); err != nil {
-					e.o.Log.Error("count use failed", "error", err)
+		// Write ahead: the event row and the use count commit together BEFORE
+		// the gate is driven. A DB failure means nothing opens.
+		ev.Reason = reason
+		usesID, maxUses := "", 0
+		if matched.MaxUses != nil {
+			usesID, maxUses = matched.ID, *matched.MaxUses
+		}
+		switch err := e.o.Store.RecordAllow(ctx, ev, now, usesID, maxUses); {
+		case errors.Is(err, store.ErrUsedUp):
+			ev.Decision, reason = protocol.DecisionDeny, ReasonUsedUp
+		case err != nil:
+			e.lost.Add(1)
+			e.o.Log.Error("decision not recorded, gate not opened", "point_id", p.PointID, "credential_id", ev.CredentialID, "error", err)
+			return Result{}, fmt.Errorf("record decision: %w", err)
+		default:
+			queued = true
+			openErr := e.open(ctx, p.PointID)
+			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+			if err := openErr; err != nil {
+				e.o.Log.Warn("open failed", "point_id", p.PointID, "error", err)
+				ev.Decision, reason = protocol.DecisionDeny, ReasonDriverError
+				if rerr := e.o.Store.RevertHeld(sctx, ev.ID, reason, usesID); rerr != nil {
+					e.o.Log.Error("could not downgrade the event of a failed open", "event_id", ev.ID, "error", rerr)
+				}
+			} else {
+				opened = true
+				if rerr := e.o.Store.ReleaseHeld(sctx, ev.ID); rerr != nil {
+					e.o.Log.Error("could not release the held event (it uploads after the hold timeout)", "event_id", ev.ID, "error", rerr)
 				}
 			}
+			cancel()
 		}
 	}
 	ev.Reason = reason
-	ev.Detail = detail(p, tolerant)
-
-	if _, err := e.o.Store.Enqueue(ctx, ev, now); err != nil {
-		return Result{}, err
+	if !queued {
+		if _, err := e.o.Store.Enqueue(ctx, ev, now); err != nil {
+			e.lost.Add(1)
+			return Result{}, err
+		}
 	}
 	if p.Kind == "plate" {
 		e.o.Log.Debug("plate presented (debug logging only)", "point_id", p.PointID, "plate", ev.ObservedPlate)

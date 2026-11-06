@@ -17,6 +17,7 @@ var bg = context.Background()
 type fixture struct {
 	t      *testing.T
 	st     *store.Store
+	dir    string
 	eng    *Engine
 	mu     sync.Mutex
 	now    time.Time
@@ -29,12 +30,13 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	st, err := store.Open(t.TempDir())
+	dir := t.TempDir()
+	st, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	f := &fixture{t: t, st: st, now: time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC), point: protocol.NewID()}
+	f := &fixture{t: t, st: st, dir: dir, now: time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC), point: protocol.NewID()}
 	f.last = f.now
 	f.eng = New(Options{
 		Store:       st,

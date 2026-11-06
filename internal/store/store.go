@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS queue (
   decision TEXT NOT NULL,
   enqueued_ms INTEGER NOT NULL,
   json TEXT NOT NULL,
-  plate_enc BLOB
+  plate_enc BLOB,
+  hold INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS command_seen (id TEXT PRIMARY KEY, result TEXT NOT NULL, at_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
@@ -102,7 +103,41 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
-	return &Store{db: db, seal: sl, dir: dir}, nil
+	s := &Store{db: db, seal: sl, dir: dir}
+	if err := s.migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	return s, nil
+}
+
+// migrate upgrades databases created by earlier builds and releases events
+// that a crash left on hold (their gate may or may not have opened; the event
+// must reach the server either way).
+func (s *Store) migrate(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('queue')`)
+	if err != nil {
+		return err
+	}
+	hasHold := false
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		hasHold = hasHold || n == "hold"
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hasHold {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE queue ADD COLUMN hold INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE queue SET hold = 0 WHERE hold <> 0`)
+	return err
 }
 
 // Close closes the database.
@@ -515,22 +550,39 @@ type QueuedEvent struct {
 // exceeds its limits the oldest deny events are dropped first, then the oldest
 // allow events; the drop count is kept in meta (heartbeat.dropped_events).
 func (s *Store) Enqueue(ctx context.Context, ev protocol.Event, now time.Time) (dropped int, err error) {
+	if err := s.insertEvent(ctx, s.db, ev, now, false); err != nil {
+		return 0, err
+	}
+	return s.afterEnqueue(ctx)
+}
+
+// insertEvent writes one queue row through q (the database or a transaction).
+// A held row is not uploaded until released.
+func (s *Store) insertEvent(ctx context.Context, q execer, ev protocol.Event, now time.Time, hold bool) error {
 	plate := ev.ObservedPlate
 	ev.ObservedPlate = ""
 	raw, err := json.Marshal(ev)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	var enc []byte
 	if plate != "" {
 		if enc, err = s.seal.seal([]byte(plate), "queue:"+ev.ID); err != nil {
-			return 0, err
+			return err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO queue(event_id, decision, enqueued_ms, json, plate_enc) VALUES(?,?,?,?,?)`,
-		ev.ID, ev.Decision, now.UnixMilli(), string(raw), enc); err != nil {
-		return 0, err
+	h := 0
+	if hold {
+		h = 1
 	}
+	_, err = q.ExecContext(ctx, `INSERT OR IGNORE INTO queue(event_id, decision, enqueued_ms, json, plate_enc, hold) VALUES(?,?,?,?,?,?)`,
+		ev.ID, ev.Decision, now.UnixMilli(), string(raw), enc, h)
+	return err
+}
+
+// afterEnqueue enforces the queue limits cheaply (a full check every 256
+// inserts or when the row count is over the limit).
+func (s *Store) afterEnqueue(ctx context.Context) (dropped int, err error) {
 	s.enqCnt++
 	if s.enqCnt%256 != 0 {
 		var n int
@@ -591,7 +643,7 @@ func (s *Store) QueueDepth(ctx context.Context) (int64, error) {
 // NextBatch returns up to limit queued events with seq greater than after, in
 // queue order, stopping before the batch would exceed maxBytes of JSON.
 func (s *Store) NextBatch(ctx context.Context, after int64, limit, maxBytes int) ([]QueuedEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, event_id, json, plate_enc FROM queue WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, event_id, json, plate_enc FROM queue WHERE seq > ? AND hold = 0 ORDER BY seq LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -656,16 +708,21 @@ func (s *Store) RecordCommand(ctx context.Context, id string, result json.RawMes
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO command_seen(id, result, at_ms) VALUES(?,?,?)`, id, string(result), now.UnixMilli()); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM command_seen WHERE at_ms < ?`, now.Add(-CommandTTL).UnixMilli()); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM command_seen WHERE id NOT IN (SELECT id FROM command_seen ORDER BY at_ms DESC, rowid DESC LIMIT ?)`, CommandKeep); err != nil {
+	if err := s.putCommand(ctx, tx, id, result, now); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) putCommand(ctx context.Context, q execer, id string, result json.RawMessage, now time.Time) error {
+	if _, err := q.ExecContext(ctx, `INSERT OR REPLACE INTO command_seen(id, result, at_ms) VALUES(?,?,?)`, id, string(result), now.UnixMilli()); err != nil {
+		return err
+	}
+	if _, err := q.ExecContext(ctx, `DELETE FROM command_seen WHERE at_ms < ?`, now.Add(-CommandTTL).UnixMilli()); err != nil {
+		return err
+	}
+	_, err := q.ExecContext(ctx, `DELETE FROM command_seen WHERE id NOT IN (SELECT id FROM command_seen ORDER BY at_ms DESC, rowid DESC LIMIT ?)`, CommandKeep)
+	return err
 }
 
 // CommandResult returns the stored result of a command seen within 24 h.

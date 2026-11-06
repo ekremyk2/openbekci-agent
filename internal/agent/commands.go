@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -85,9 +86,15 @@ func (s *sessState) openPoint(env protocol.Envelope, c *protocol.Command) {
 		}
 	}
 
+	// Bookkeeping after a pulse must survive a shutdown that cancels s.ctx.
+	settle := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.WithoutCancel(s.ctx), 5*time.Second)
+	}
 	finish := func(status string, detail map[string]any) {
 		raw, _ := json.Marshal(storedResult{Status: status, Detail: detail})
-		if err := a.st.RecordCommand(s.ctx, env.ID, raw, a.now()); err != nil {
+		sctx, cancel := settle()
+		defer cancel()
+		if err := a.st.RecordCommand(sctx, env.ID, raw, a.now()); err != nil {
 			a.log.Error("record command result", "error", err)
 		}
 		s.ack(env.ID, status, detail)
@@ -114,26 +121,35 @@ func (s *sessState) openPoint(env protocol.Envelope, c *protocol.Command) {
 		return
 	}
 
-	// Write a provisional result first: if the process dies mid-pulse, a
-	// re-delivery must not open the gate a second time.
+	// Write ahead: the provisional result (a re-delivery must not open the
+	// gate a second time) and the manual_open event commit together BEFORE the
+	// pulse. If that fails nothing opens: the open is refused.
 	prov, _ := json.Marshal(storedResult{Status: protocol.AckFailed, Detail: map[string]any{"reason": "interrupted"}})
-	if err := a.st.RecordCommand(s.ctx, env.ID, prov, a.now()); err != nil {
-		a.log.Error("record command", "error", err)
+	ev := protocol.Event{
+		ID: protocol.NewID(), PointID: c.PointID, Decision: protocol.DecisionManualOpen, Reason: "guard",
+		CredentialID: c.CredentialID, VisitorEntryID: c.VisitorEntryID, CommandID: env.ID, OccurredAt: protocol.At(a.now()),
+	}
+	if err := a.st.RecordCommandAndEvent(s.ctx, env.ID, prov, ev, a.now()); err != nil {
+		a.eng.CountLost()
+		a.log.Error("open command not recorded, gate not opened", "command_id", env.ID, "point_id", c.PointID, "error", err)
 		s.ack(env.ID, protocol.AckError, map[string]string{"reason": "store error"})
 		return
 	}
 	if err := a.openPoint(s.ctx, c.PointID); err != nil {
 		a.log.Error("open command failed", "command_id", env.ID, "point_id", c.PointID, "error", err)
+		sctx, cancel := settle()
+		if derr := a.st.DiscardHeld(sctx, ev.ID); derr != nil {
+			a.log.Error("could not discard the event of a failed open", "event_id", ev.ID, "error", derr)
+		}
+		cancel()
 		finish(protocol.AckFailed, map[string]any{"reason": "driver_error", "message": truncate(err.Error(), 200)})
 		return
 	}
-	ev := protocol.Event{
-		ID: protocol.NewID(), PointID: c.PointID, Decision: protocol.DecisionManualOpen, Reason: "guard",
-		CredentialID: c.CredentialID, VisitorEntryID: c.VisitorEntryID, CommandID: env.ID, OccurredAt: protocol.At(a.now()),
+	sctx, cancel := settle()
+	if err := a.st.ReleaseHeld(sctx, ev.ID); err != nil {
+		a.log.Error("could not release the manual_open event (it uploads after the hold timeout)", "event_id", ev.ID, "error", err)
 	}
-	if _, err := a.st.Enqueue(s.ctx, ev, a.now()); err != nil {
-		a.log.Error("queue manual_open event", "error", err)
-	}
+	cancel()
 	a.log.Info("point opened by command", "command_id", env.ID, "point_id", c.PointID, "actor", actorLabel(c.Actor))
 	finish(protocol.AckDone, nil)
 	a.notifyFlush()

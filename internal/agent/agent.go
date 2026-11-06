@@ -547,19 +547,21 @@ func (a *Agent) buildHello(ctx context.Context) (protocol.AgentHello, error) {
 	}, nil
 }
 
-func (a *Agent) buildHeartbeat(ctx context.Context) (protocol.Heartbeat, error) {
+// buildHeartbeat never fails: a broken store is itself reported (store_error)
+// because that is exactly when the server must know.
+func (a *Agent) buildHeartbeat(ctx context.Context) protocol.Heartbeat {
+	var storeErr error
+	keep := func(err error) {
+		if err != nil && storeErr == nil {
+			storeErr = err
+		}
+	}
 	sv, err := a.st.SnapshotVersion(ctx)
-	if err != nil {
-		return protocol.Heartbeat{}, err
-	}
+	keep(err)
 	q, err := a.st.QueueDepth(ctx)
-	if err != nil {
-		return protocol.Heartbeat{}, err
-	}
+	keep(err)
 	dropped, err := a.st.DroppedEvents(ctx)
-	if err != nil {
-		return protocol.Heartbeat{}, err
-	}
+	keep(err)
 	suspect := false
 	if a.offsetKnown.Load() {
 		off := time.Duration(a.offsetMS.Load()) * time.Millisecond
@@ -567,12 +569,17 @@ func (a *Agent) buildHeartbeat(ctx context.Context) (protocol.Heartbeat, error) 
 	}
 	states := a.driverStates(ctx)
 	if raw, err := json.Marshal(states); err == nil {
-		_ = a.st.SetMeta(ctx, store.MetaDriversStatus, string(raw))
+		keep(a.st.SetMeta(ctx, store.MetaDriversStatus, string(raw)))
 	}
-	return protocol.Heartbeat{
+	hb := protocol.Heartbeat{
 		SnapshotVersion: sv, QueueDepth: q, DroppedEvents: dropped, UptimeS: int64(a.now().Sub(a.start).Seconds()),
-		ClockSuspect: suspect, ClockOffsetMS: a.clockOffsetPtr(), Drivers: states,
-	}, nil
+		ClockSuspect: suspect, ClockOffsetMS: a.clockOffsetPtr(), Drivers: states, LostEvents: a.eng.LostEvents(),
+	}
+	if storeErr != nil && ctx.Err() == nil {
+		hb.StoreError = truncate(storeErr.Error(), 200)
+		a.log.Error("store unhealthy", "error", storeErr)
+	}
+	return hb
 }
 
 // StatusInfo is what `status` prints.

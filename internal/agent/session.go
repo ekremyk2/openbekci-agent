@@ -253,12 +253,7 @@ func (s *sessState) heartbeats(every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		hb, err := s.a.buildHeartbeat(s.ctx)
-		if err == nil {
-			_, _ = s.send(protocol.TypeHeartbeat, hb)
-		} else if s.ctx.Err() == nil {
-			s.a.log.Error("build heartbeat", "error", err)
-		}
+		_, _ = s.send(protocol.TypeHeartbeat, s.a.buildHeartbeat(s.ctx))
 		select {
 		case <-t.C:
 			pctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
@@ -402,6 +397,10 @@ func (s *sessState) maintain() {
 			delete(s.inflight, ref)
 			s.needRetry = true
 		}
+	}
+	// A held event whose settle failed must not stay out of the queue.
+	if err := s.a.st.ReleaseStale(s.ctx, s.a.now()); err != nil && s.ctx.Err() == nil {
+		s.a.log.Error("release stale held events", "error", err)
 	}
 	if s.needRetry && len(s.inflight) == 0 {
 		s.cursor, s.needRetry = 0, false

@@ -683,6 +683,11 @@ type Heartbeat struct {
 	ClockSuspect    bool          `json:"clock_suspect"`
 	ClockOffsetMS   *int64        `json:"clock_offset_ms,omitempty"`
 	Drivers         []DriverState `json:"drivers"`
+	// LostEvents counts decisions that could not be written to the local
+	// store (the gate was not opened for them). StoreError is set while the
+	// store cannot be read.
+	LostEvents int64  `json:"lost_events,omitempty"`
+	StoreError string `json:"store_error,omitempty"`
 }
 
 // Validate implements Payload.
