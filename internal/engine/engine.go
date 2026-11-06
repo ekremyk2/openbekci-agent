@@ -194,7 +194,7 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 	}
 	tolerant := false
 	var matched *protocol.Entry
-	reason := ReasonUnknown
+	var reason string
 
 	switch {
 	case e.Stopped():
@@ -252,6 +252,9 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 
 	if _, err := e.o.Store.Enqueue(ctx, ev, now); err != nil {
 		return Result{}, err
+	}
+	if p.Kind == "plate" {
+		e.o.Log.Debug("plate presented (debug logging only)", "point_id", p.PointID, "plate", ev.ObservedPlate)
 	}
 	e.o.Log.Info("decision", "point_id", p.PointID, "decision", ev.Decision, "reason", ev.Reason, "credential_id", ev.CredentialID, "event_id", ev.ID)
 	if e.o.OnEvent != nil {

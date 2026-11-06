@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,7 +164,7 @@ func (s *Server) Close() {
 		s.live.close(1001, "server shutdown")
 	}
 	s.mu.Unlock()
-	s.Server.CloseClientConnections()
+	s.CloseClientConnections()
 	s.Server.Close()
 }
 
@@ -591,7 +592,7 @@ func (s *Server) handleMessage(env protocol.Envelope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
-		if err == protocol.ErrUnknownType {
+		if errors.Is(err, protocol.ErrUnknownType) {
 			s.unsupp++
 			s.ackLocked(env.ID, protocol.AckUnsupported, nil)
 		} else {

@@ -34,7 +34,7 @@ const (
 // Command names.
 const (
 	CmdOpenPoint        = "open_point"
-	CmdRevokeCredential = "revoke_credential"
+	CmdRevokeCredential = "revoke_credential" //nolint:gosec // a command name, not a credential
 	CmdRequestSnapshot  = "request_snapshot"
 	CmdUpdateConfig     = "update_config"
 	CmdRevoked          = "revoked"

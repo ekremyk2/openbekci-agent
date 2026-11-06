@@ -230,7 +230,9 @@ func TestLongPollFallbackAndWebSocketRetry(t *testing.T) {
 		t.Fatalf("mode change callbacks: %d", modeChanges.Load())
 	}
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Log(err)
+	}
 }
 
 func TestUntrustedCertificateIsRejected(t *testing.T) {

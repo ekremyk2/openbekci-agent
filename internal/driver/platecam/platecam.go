@@ -141,7 +141,9 @@ func (d *Driver) Subscribe(ctx context.Context, out chan<- driver.Presentation) 
 			}
 			return err
 		case <-ctx.Done():
-			<-errc
+			if err := <-errc; err != nil {
+				d.log.Debug("reader ended", "error", err)
+			}
 			return nil
 		}
 	}

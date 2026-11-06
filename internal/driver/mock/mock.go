@@ -186,7 +186,7 @@ func (d *Driver) Subscribe(ctx context.Context, out chan<- driver.Presentation) 
 	}
 	var wg sync.WaitGroup
 	if d.cfg.Listen != "" {
-		srv, err := d.serve()
+		srv, err := d.serve(ctx)
 		if err != nil {
 			return err
 		}
@@ -238,8 +238,8 @@ func (d *Driver) Subscribe(ctx context.Context, out chan<- driver.Presentation) 
 	}
 }
 
-func (d *Driver) serve() (*http.Server, error) {
-	ln, err := net.Listen("tcp", d.cfg.Listen)
+func (d *Driver) serve(ctx context.Context) (*http.Server, error) {
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", d.cfg.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("mock %s: listen: %w", d.name, err)
 	}

@@ -106,7 +106,12 @@ func (h *harness) run(a *Agent) *running {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &running{cancel: cancel, done: make(chan error, 1)}
 	go func() { r.done <- a.Run(ctx) }()
-	h.t.Cleanup(func() { r.cancel(); <-r.done })
+	h.t.Cleanup(func() {
+		r.cancel()
+		if err := <-r.done; err != nil {
+			h.t.Logf("agent ended with: %v", err)
+		}
+	})
 	return r
 }
 
@@ -208,13 +213,4 @@ func (h *harness) waitSynced() {
 		s, err := ReadStatus(context.Background(), h.cfg.StateDir)
 		return err == nil && s.SnapshotVersion == h.fs.Version() && s.ConfigVersion == h.fs.ConfigVersion()
 	})
-}
-
-func eventFor(evs []protocol.Event, plate string) (protocol.Event, bool) {
-	for _, e := range evs {
-		if e.ObservedPlate == plate {
-			return e, true
-		}
-	}
-	return protocol.Event{}, false
 }

@@ -98,7 +98,7 @@ func Open(dir string) (*Store, error) {
 	}
 	// One connection serialises all access; the agent is not write-heavy.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.ExecContext(context.Background(), schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -120,7 +120,8 @@ func (s *Store) Wipe(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, t := range []string{"meta", "entry", "uses", "queue", "command_seen", "config", "snapshot_stage"} {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
+		stmt := "DELETE FROM " + t //nolint:gosec // t is one of the fixed table names above
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
@@ -561,7 +562,7 @@ func (s *Store) enforceLimits(ctx context.Context) (int, error) {
 	}
 	dropped := 0
 	for _, where := range []string{`decision = 'deny'`, `1 = 1`} {
-		res, err := s.db.ExecContext(ctx, `DELETE FROM queue WHERE seq IN (SELECT seq FROM queue WHERE `+where+` ORDER BY seq LIMIT ?)`, over-dropped)
+		res, err := s.db.ExecContext(ctx, `DELETE FROM queue WHERE seq IN (SELECT seq FROM queue WHERE `+where+` ORDER BY seq LIMIT ?)`, over-dropped) //nolint:gosec // where is one of two constant predicates
 		if err != nil {
 			return dropped, err
 		}

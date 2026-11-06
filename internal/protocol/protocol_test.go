@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,7 +116,7 @@ func TestInvalidFixturesRejected(t *testing.T) {
 
 func TestUnknownTypeAndForwardCompat(t *testing.T) {
 	e := Envelope{V: 1, Type: "future", ID: NewID(), TS: Now(), Payload: json.RawMessage(`{}`)}
-	if _, err := e.Decode(); err != ErrUnknownType {
+	if _, err := e.Decode(); !errors.Is(err, ErrUnknownType) {
 		t.Fatalf("want ErrUnknownType, got %v", err)
 	}
 	// Unknown payload fields are tolerated.
