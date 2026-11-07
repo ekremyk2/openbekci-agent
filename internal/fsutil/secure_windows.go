@@ -3,7 +3,9 @@
 package fsutil
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"unsafe"
@@ -55,20 +57,34 @@ func SecureDir(dir string) error {
 	if err != nil {
 		return err
 	}
+	if afterList != nil {
+		afterList()
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		if err := setOwnerOnlyDACL(filepath.Join(dir, e.Name())); err != nil {
+		// SQLite deletes store.db-wal/-shm when the previous process closes the
+		// database, so a listed file may be gone already: nothing to protect.
+		if err := setOwnerOnlyDACL(filepath.Join(dir, e.Name())); err != nil && !isGone(err) {
 			return fmt.Errorf("restrict %s to its owner: %w", e.Name(), err)
 		}
 	}
 	return nil
 }
 
-// SecureFile restricts one file to SYSTEM and the current account.
+// afterList is a test hook that runs between listing the directory and
+// securing its files.
+var afterList func()
+
+func isGone(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
+}
+
+// SecureFile restricts one file to SYSTEM and the current account. A file that
+// no longer exists is not an error.
 func SecureFile(path string) error {
-	if err := setOwnerOnlyDACL(path); err != nil {
+	if err := setOwnerOnlyDACL(path); err != nil && !isGone(err) {
 		return fmt.Errorf("restrict %s to its owner: %w", path, err)
 	}
 	return nil

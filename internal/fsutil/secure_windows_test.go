@@ -100,3 +100,27 @@ func TestSecureDirAndFileAreOwnerOnly(t *testing.T) {
 		t.Fatalf("owner cannot read its own token: %v", err)
 	}
 }
+
+// A file listed by SecureDir may vanish before its ACL is set (SQLite removes
+// -wal/-shm when the previous process closes the database).
+func TestSecureDirToleratesFilesDeletedAfterListing(t *testing.T) {
+	dir := t.TempDir()
+	gone := filepath.Join(dir, "store.db-shm")
+	kept := filepath.Join(dir, "store.key")
+	for _, p := range []string{gone, kept} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	afterList = func() { _ = os.Remove(gone) }
+	defer func() { afterList = nil }()
+	if err := SecureDir(dir); err != nil {
+		t.Fatalf("SecureDir failed on a file that vanished: %v", err)
+	}
+	if ok, err := OwnerOnly(kept); err != nil || !ok {
+		t.Fatalf("remaining file not secured: %v %v", ok, err)
+	}
+	if err := SecureFile(gone); err != nil {
+		t.Fatalf("SecureFile of a missing file: %v", err)
+	}
+}
