@@ -59,6 +59,14 @@ type Driver interface {
 	Close() error
 }
 
+// SafeStater is implemented by output drivers that can force their hardware
+// into the safe (closed) state. The agent calls it once per instance at
+// startup, before any presentation is handled: an agent killed mid-pulse
+// (SIGKILL, power loss) can leave a relay latched open.
+type SafeStater interface {
+	SafeState(ctx context.Context) error
+}
+
 // Factory builds an instance from its section of agent.yaml.
 type Factory func(name string, cfg map[string]any, log *slog.Logger) (Driver, error)
 

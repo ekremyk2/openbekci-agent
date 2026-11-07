@@ -259,6 +259,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	defer a.closeDrivers()
+	a.safeStateSweep(ctx)
 
 	wctx, stopWorkers := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -363,6 +364,29 @@ func (a *Agent) buildDrivers() error {
 		in.drv = drv
 	}
 	return nil
+}
+
+// safeStateSweep puts every output driver into its safe state before the first
+// presentation is handled (see driver.SafeStater). Failures are logged: an
+// unreachable relay is also visible in its health.
+func (a *Agent) safeStateSweep(ctx context.Context) {
+	var wg sync.WaitGroup
+	for _, in := range a.drivers {
+		ss, ok := in.drv.(driver.SafeStater)
+		if !ok || in.drv == nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := ss.SafeState(ctx); err != nil {
+				a.log.Warn("could not put the driver into its safe state at startup", "instance", in.name, "error", err)
+			} else {
+				a.log.Info("driver put into its safe state", "instance", in.name)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func (a *Agent) closeDrivers() {

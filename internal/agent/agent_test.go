@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -812,5 +813,50 @@ func TestQuietServerStaysRunningLongPoll(t *testing.T) {
 	waitFor(t, 5*time.Second, "decision", func() bool { return h.status().QueueDepth >= 1 || len(h.fs.Events()) >= 1 })
 	if n := len(h.mock().Opens()); n != 1 {
 		t.Fatalf("long-poll agent on a quiet server must stay running, got %d opens", n)
+	}
+}
+
+// safeMock records when SafeState ran relative to the first pulse.
+type safeMock struct {
+	*mock.Driver
+	mu     sync.Mutex
+	events []string
+}
+
+func (s *safeMock) note(e string) { s.mu.Lock(); s.events = append(s.events, e); s.mu.Unlock() }
+func (s *safeMock) SafeState(context.Context) error {
+	s.note("safe")
+	return nil
+}
+
+func TestSafeStateSweepRunsBeforeAnyPulse(t *testing.T) {
+	h := newHarness(t)
+	h.fs.Upsert(h.entry("34ABC123", nil))
+	var sm *safeMock
+	o := h.options()
+	o.Registrations = []driver.Registration{{Type: "mock", New: func(name string, _ map[string]any, log *slog.Logger) (driver.Driver, error) {
+		m, err := mock.New(name, mock.Config{}, log)
+		if err != nil {
+			return nil, err
+		}
+		m.SetOpenHook(func(context.Context, string) error { sm.note("pulse"); return nil })
+		sm = &safeMock{Driver: m}
+		h.mu.Lock()
+		h.cur = m
+		h.mu.Unlock()
+		return sm, nil
+	}}}
+	a, err := New(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.run(a)
+	h.waitSynced()
+	h.present("34ABC123")
+	waitFor(t, 5*time.Second, "pulse", func() bool { sm.mu.Lock(); defer sm.mu.Unlock(); return len(sm.events) >= 2 })
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.events[0] != "safe" || sm.events[1] != "pulse" {
+		t.Fatalf("order %v, want the safe-state sweep before the first pulse", sm.events)
 	}
 }

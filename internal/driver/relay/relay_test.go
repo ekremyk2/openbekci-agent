@@ -227,3 +227,48 @@ func (f *fakePort) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 func (f *fakePort) Close() error { return nil }
+
+func TestSafeStateSendsOffOnEveryChannelAtStartup(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+	zero := 0
+	d, err := New("gates", Config{Mode: "http", MinIntervalMS: &zero, HTTP: &HTTPConfig{Channels: map[string]HTTPChannel{
+		"in":  {OnURL: srv.URL + "/relay/0?turn=on", OffURL: srv.URL + "/relay/0?turn=off"},
+		"out": {OnURL: srv.URL + "/relay/1?turn=on", OffURL: srv.URL + "/relay/1?turn=off"},
+		"ped": {OnURL: srv.URL + "/relay/2?turn=on&timer=1"}, // self-resetting: nothing to send
+	}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SafeState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var offs []string
+	for _, h := range rec.snapshot() {
+		offs = append(offs, h.path+"?"+h.query)
+	}
+	if len(offs) != 2 || offs[0] != "/relay/0?turn=off" || offs[1] != "/relay/1?turn=off" {
+		t.Fatalf("safe-state requests %v, want an off for each channel that has one", offs)
+	}
+}
+
+func TestSafeStateAttemptsEveryChannelEvenIfOneFails(t *testing.T) {
+	rec := &recorder{code: http.StatusInternalServerError}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+	zero := 0
+	d, err := New("gates", Config{Mode: "http", MinIntervalMS: &zero, HTTP: &HTTPConfig{Channels: map[string]HTTPChannel{
+		"in":  {OnURL: srv.URL + "/a?on", OffURL: srv.URL + "/a?off"},
+		"out": {OnURL: srv.URL + "/b?on", OffURL: srv.URL + "/b?off"},
+	}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SafeState(context.Background()); err == nil {
+		t.Fatal("a failing off must be reported")
+	}
+	if n := len(rec.snapshot()); n != 2 {
+		t.Fatalf("%d off requests, want 2: one failure must not skip the other channel", n)
+	}
+}

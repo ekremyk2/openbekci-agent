@@ -199,6 +199,25 @@ func (d *Driver) Open(ctx context.Context, channel string) (err error) {
 	}
 }
 
+// SafeState sends Off on every configured channel. An agent that died
+// mid-pulse (SIGKILL, power loss) leaves a serial or HTTP relay with an
+// explicit off latched open; this is called once at startup, before any
+// pulse. Every channel is attempted whatever happens to the others.
+func (d *Driver) SafeState(ctx context.Context) error {
+	var errs []error
+	for _, ch := range d.sw.Channels() {
+		octx, cancel := context.WithTimeout(ctx, offTimeout)
+		if err := d.sw.Off(octx, ch); err != nil {
+			errs = append(errs, fmt.Errorf("channel %s: %w", ch, err))
+		}
+		cancel()
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("relay %s: safe-state sweep: %w", d.name, err)
+	}
+	return nil
+}
+
 // Subscribe reports ErrNoEvents: relays are output only.
 func (d *Driver) Subscribe(context.Context, chan<- driver.Presentation) error {
 	return driver.ErrNoEvents
