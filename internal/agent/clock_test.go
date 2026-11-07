@@ -73,3 +73,25 @@ func TestOpenRefusedForImplausibleTimestamps(t *testing.T) {
 		t.Fatalf("sane command: %+v", res)
 	}
 }
+
+// A restart on a clock that is behind the persisted last contact (no RTC) must
+// not count as being in contact: the agent stays stopped until the server talks.
+func TestRestartWithClockBehindLastContactStaysStopped(t *testing.T) {
+	h := newHarness(t)
+	h.fs.Upsert(h.entry("34ABC123", nil))
+	r := h.start()
+	h.waitSynced()
+	if err := r.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.SetOffline(true)
+	h.shift.Add(int64(-3 * time.Hour)) // the Pi boots with a stale clock
+	h.resetMock()
+	h.start()
+	m := h.mock()
+	h.present("34ABC123")
+	waitFor(t, 5*time.Second, "decision", func() bool { return h.status().QueueDepth >= 1 })
+	if n := len(m.Opens()); n != 0 {
+		t.Fatalf("opened %d times on a clock that is behind the last contact", n)
+	}
+}

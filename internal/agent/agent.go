@@ -80,8 +80,11 @@ type Agent struct {
 	offsetKnown atomic.Bool
 	lastContact atomic.Int64 // unix ms
 	lastPersist atomic.Int64 // unix ms
-	flushCh     chan struct{}
-	presentCh   chan driver.Presentation
+	// lastContactMono is the process-monotonic time of the last contact; the
+	// grace period uses it next to the (resettable) wall clock.
+	lastContactMono atomic.Pointer[time.Time]
+	flushCh         chan struct{}
+	presentCh       chan driver.Presentation
 
 	rotating atomic.Bool
 	// quarantined is set by a bare HTTP 401: the agent keeps its allow-list
@@ -161,6 +164,8 @@ func (a *Agent) touchContact(ctx context.Context, force bool) {
 		_ = a.st.SetMeta(ctx, store.MetaQuarantined, "")
 	}
 	now := a.now()
+	mono := time.Now() // real clock with its monotonic reading, never the injected one
+	a.lastContactMono.Store(&mono)
 	a.lastContact.Store(now.UnixMilli())
 	last := a.lastPersist.Load()
 	if force || now.UnixMilli()-last >= contactPersistEvery.Milliseconds() {
@@ -211,9 +216,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		Store:       a.st,
 		Clock:       a.now,
 		LastContact: a.lastContactTime,
-		Open:        a.openPoint,
-		OnEvent:     a.notifyFlush,
-		Log:         a.log,
+		ContactAge: func() (time.Duration, bool) {
+			if t := a.lastContactMono.Load(); t != nil {
+				return time.Since(*t), true
+			}
+			return 0, false
+		},
+		Open:    a.openPoint,
+		OnEvent: a.notifyFlush,
+		Log:     a.log,
 	})
 	if t, err := a.st.LastContact(ctx); err == nil && !t.IsZero() {
 		a.lastContact.Store(t.UnixMilli())

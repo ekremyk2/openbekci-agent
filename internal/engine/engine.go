@@ -69,6 +69,10 @@ type Options struct {
 	Clock func() time.Time
 	// LastContact returns the last authenticated server contact (zero = never).
 	LastContact func() time.Time
+	// ContactAge optionally returns how long ago, on the process's monotonic
+	// clock, the last contact happened (ok=false when none happened since the
+	// process started). It cannot be fooled by a wall clock that was reset.
+	ContactAge func() (age time.Duration, ok bool)
 	// Open executes an allow decision on the point's hardware.
 	Open func(ctx context.Context, pointID string) error
 	// OnEvent is called after an event was queued.
@@ -142,7 +146,16 @@ func (e *Engine) Settings() Settings {
 	return e.s
 }
 
+// ClockBackTolerance is how far the wall clock may sit behind the persisted
+// last contact before it counts as reset (an NTP step is a few seconds).
+const ClockBackTolerance = 60 * time.Second
+
 // Stopped reports whether the offline grace period has elapsed (design 6.3).
+// The age of the last contact is the larger of the wall-clock age and the
+// monotonic age, so neither a forward nor a backward wall-clock jump can
+// stretch the grace period. A wall clock that is behind the last contact (a
+// Pi without an RTC restoring a stale time at boot) is suspect, not contact:
+// the agent stays stopped until the server talks to it again.
 func (e *Engine) Stopped() bool {
 	if e.o.LastContact == nil {
 		return false
@@ -151,7 +164,17 @@ func (e *Engine) Stopped() bool {
 	if last.IsZero() {
 		return false
 	}
-	return e.o.Clock().Sub(last) > time.Duration(e.Settings().GraceHours)*time.Hour
+	wall := e.o.Clock().Sub(last)
+	if wall < -ClockBackTolerance {
+		return true
+	}
+	age := wall
+	if e.o.ContactAge != nil {
+		if m, ok := e.o.ContactAge(); ok && m > age {
+			age = m
+		}
+	}
+	return age > time.Duration(e.Settings().GraceHours)*time.Hour
 }
 
 // canonical converts the raw reader value to the stored credential value.

@@ -262,3 +262,34 @@ func TestTagKind(t *testing.T) {
 		t.Fatalf("%+v", r.Event)
 	}
 }
+
+func TestStoppedWallClockGoingBackwardsIsSuspectNotContact(t *testing.T) {
+	f := newFixture(t)
+	if f.eng.Stopped() {
+		t.Fatal("stopped right after contact")
+	}
+	f.advance(-30 * time.Second) // NTP step inside the tolerance
+	if f.eng.Stopped() {
+		t.Fatal("a small step back must not stop the agent")
+	}
+	f.advance(-2 * time.Hour) // RTC-less Pi restored a stale time
+	if !f.eng.Stopped() {
+		t.Fatal("a wall clock behind the last contact must count as suspect (stopped), not as contact")
+	}
+}
+
+func TestStoppedUsesTheLargerOfWallAndMonotonicAge(t *testing.T) {
+	f := newFixture(t)
+	var mono time.Duration
+	f.eng.o.ContactAge = func() (time.Duration, bool) { return mono, true }
+	f.advance(time.Hour)
+	mono = 80 * time.Hour // the process knows 80 h passed although the wall clock says 1 h
+	if !f.eng.Stopped() {
+		t.Fatal("the monotonic age must be able to stop the agent")
+	}
+	mono = 2 * time.Hour
+	f.advance(72 * time.Hour) // wall age 73 h
+	if !f.eng.Stopped() {
+		t.Fatal("the wall age must still count")
+	}
+}
