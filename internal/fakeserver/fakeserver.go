@@ -72,6 +72,8 @@ type Server struct {
 	live     *session
 	pollSess *session
 	pollOut  []protocol.Envelope
+	pollSeq  int64
+	pollReqs int // poll requests that carried messages from the agent
 	pollWake chan struct{}
 
 	// recorded traffic
@@ -837,6 +839,11 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if len(req.Messages) > 0 {
+		s.mu.Lock()
+		s.pollReqs++
+		s.mu.Unlock()
+	}
 	for _, env := range req.Messages {
 		if env.Type == protocol.TypeHello {
 			s.mu.Lock()
@@ -846,6 +853,7 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 			s.pollSess = &session{pollMode: true, done: make(chan struct{})}
 			s.live = s.pollSess
 			s.pollOut = nil
+			s.pollSeq = 0
 			s.mu.Unlock()
 		}
 		s.mu.Lock()
@@ -862,12 +870,17 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		out := s.pollOut
 		s.pollOut = nil
+		var seq int64
+		if len(out) > 0 {
+			s.pollSeq++
+			seq = s.pollSeq
+		}
 		s.mu.Unlock()
 		if len(out) > 0 || req.WaitSeconds == 0 {
 			if out == nil {
 				out = []protocol.Envelope{}
 			}
-			writeJSON(w, protocol.Poll{Messages: out})
+			writeJSON(w, protocol.Poll{Messages: out, Seq: seq})
 			return
 		}
 		select {
@@ -880,6 +893,9 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// PollRequests counts long-poll requests that carried messages from the agent.
+func (s *Server) PollRequests() int { s.mu.Lock(); defer s.mu.Unlock(); return s.pollReqs }
 
 // SetOffline makes every endpoint answer 503 and drops the live connection,
 // like an unreachable server.

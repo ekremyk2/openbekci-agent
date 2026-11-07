@@ -765,6 +765,11 @@ func (e Envelope) Decode() (Payload, error) {
 type Poll struct {
 	Messages    []Envelope `json:"messages"`
 	WaitSeconds int        `json:"wait_seconds,omitempty"`
+	// Seq is set by the server on a response that carries messages: a
+	// per-session counter starting at 1, in the order the server dequeued
+	// them. The agent keeps several requests in flight and delivers messages
+	// in Seq order; 0 means the server does not number responses.
+	Seq int64 `json:"seq,omitempty"`
 }
 
 // EnrolRequest is the enrolment request body (section 4.2).

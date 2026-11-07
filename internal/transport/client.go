@@ -62,6 +62,9 @@ type Options struct {
 	WSRetry time.Duration
 	// PollWait is wait_seconds of a long poll (default 25).
 	PollWait int
+	// PollHoleTimeout is how long a long-poll response may be missing from the
+	// server's sequence before the session restarts (default 10 s).
+	PollHoleTimeout time.Duration
 
 	Log *slog.Logger
 	// OnContact is called for every sign that the server is alive and
