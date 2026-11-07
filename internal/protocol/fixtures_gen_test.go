@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,8 +85,31 @@ func fixtureSet() map[string]string {
 		"invalid-entry-hhmm": env("delta", `{"from_version":1,"to_version":2,"changes":[{"op":"upsert","entry":{"id":"`+idCred+`","kind":"plate","value":"34ABC123","points":["`+idPoint+`"],`+
 			`"valid_from":"2026-11-07T10:00:00Z","valid_to":null,"recurring":{"days":[1],"start":"9:00","end":"17:00"},"max_uses":null}}]}`),
 		"invalid-heartbeat-no-drivers": env("heartbeat", `{"snapshot_version":1,"queue_depth":0}`),
+
+		// update_config: required parts missing; grace period outside 1..336.
+		"invalid-command-update-config": env("command", `{"command":"update_config","config_version":8,"site":{"timezone":"Europe/Istanbul"}}`),
+		"invalid-command-update-config-grace": env("command", `{"command":"update_config","config_version":8,"site":{"timezone":"Europe/Istanbul"},"points":[],`+
+			`"settings":{"offline_grace_hours":337,"plate_match":"exact","heartbeat_seconds":30,"maintenance_hour":3}}`),
+		"invalid-command-revoke-credential": env("command", `{"command":"revoke_credential","credential_id":"not-a-uuid"}`),
+		"invalid-delta-remove-with-entry":   env("delta", `{"from_version":1,"to_version":2,"changes":[{"op":"remove","credential_id":"`+idCred+`","entry":`+entry+`}]}`),
+		// Over the limits of section 4.5: 101 events, 2 001 entries, 501 changes.
+		"invalid-event-batch-101":       env("event", `{"events":[`+repeatJoin(minimalEvent(), 101)+`]}`),
+		"invalid-snapshot-entries-2001": env("snapshot", `{"version":1,"part":1,"parts":1,"site":{"timezone":"Europe/Istanbul"},"entries":[`+repeatJoin(minimalEntry(), 2001)+`]}`),
+		"invalid-delta-changes-501":     env("delta", `{"from_version":1,"to_version":2,"changes":[`+repeatJoin(`{"op":"remove","credential_id":"`+idCred+`"}`, 501)+`]}`),
 	}
 	return f
+}
+
+func repeatJoin(item string, n int) string {
+	return strings.TrimSuffix(strings.Repeat(item+",", n), ",")
+}
+
+func minimalEvent() string {
+	return `{"id":"` + idEvent + `","point_id":"` + idPoint + `","decision":"deny","reason":"unknown","occurred_at":"2026-11-07T10:01:12.481Z"}`
+}
+
+func minimalEntry() string {
+	return `{"id":"` + idCred + `","kind":"plate","value":"A","points":["` + idPoint + `"],"valid_from":"2026-11-07T10:00:00Z"}`
 }
 
 // TestGenerateFixtures rewrites testdata/protocol/v1 when run with
@@ -94,7 +118,10 @@ func TestGenerateFixtures(t *testing.T) {
 	dir := filepath.Join("..", "..", "testdata", "protocol", "v1")
 	for name, src := range fixtureSet() {
 		var buf bytes.Buffer
-		if err := json.Indent(&buf, []byte(src), "", "  "); err != nil {
+		if len(src) > 20_000 {
+			// the limit fixtures are big: keep them compact
+			buf.WriteString(src)
+		} else if err := json.Indent(&buf, []byte(src), "", "  "); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		buf.WriteByte('\n')

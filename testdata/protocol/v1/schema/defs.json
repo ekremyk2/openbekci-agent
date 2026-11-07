@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/defs.json",
+  "title": "Shared definitions (design 07-access-control, Appendix B)",
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "uuidv7": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "kind": { "type": "string", "examples": ["plate", "visitor_qr", "tag", "pin"] },
+    "hhmm": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "value", "points", "valid_from"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "value": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/uuid" }, "minItems": 1 },
+        "valid_from": { "$ref": "#/$defs/ts" },
+        "valid_to": { "oneOf": [{ "$ref": "#/$defs/ts" }, { "type": "null" }] },
+        "recurring": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["days", "start", "end"],
+              "properties": {
+                "days": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 7 }, "minItems": 1, "uniqueItems": true },
+                "start": { "$ref": "#/$defs/hhmm" },
+                "end": { "$ref": "#/$defs/hhmm" }
+              }
+            }
+          ]
+        },
+        "max_uses": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] }
+      }
+    },
+    "driver_state": {
+      "type": "object",
+      "required": ["instance", "state"],
+      "properties": {
+        "instance": { "type": "string" },
+        "state": { "enum": ["ok", "degraded", "down", "missing"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "driver_ref": {
+      "type": "object",
+      "required": ["instance"],
+      "properties": { "instance": { "type": "string" }, "channel": { "type": "string" } }
+    }
+  }
+}

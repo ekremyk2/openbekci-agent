@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "type", "id", "ts", "payload"],
+  "properties": {
+    "v": { "const": 1 },
+    "type": { "type": "string" },
+    "id": { "$ref": "defs.json#/$defs/uuid" },
+    "ts": { "$ref": "defs.json#/$defs/ts" },
+    "payload": { "type": "object" }
+  }
+}

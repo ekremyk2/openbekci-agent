@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "type": "delta",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "from_version": 1,
+    "to_version": 2,
+    "changes": [
+      {
+        "op": "remove",
+        "credential_id": "0192f1a0-0000-7000-8000-0000000000c1",
+        "entry": {
+          "id": "0192f1a0-0000-7000-8000-0000000000c1",
+          "kind": "plate",
+          "value": "34ABC123",
+          "points": [
+            "0192f1a0-0000-7000-8000-0000000000b1"
+          ],
+          "valid_from": "2026-11-07T10:00:00Z",
+          "valid_to": "2026-11-07T11:30:00Z",
+          "recurring": null,
+          "max_uses": 1
+        }
+      }
+    ]
+  }
+}
