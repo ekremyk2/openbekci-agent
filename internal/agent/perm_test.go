@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"github.com/openbekci/openbekci-agent/internal/store"
+	"github.com/openbekci/openbekci-agent/internal/transport"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/openbekci/openbekci-agent/internal/fsutil"
 )
@@ -47,4 +49,37 @@ func TestEmptyKeyIsFatalAtStartupAndEnrolRecovers(t *testing.T) {
 	}
 	h.start()
 	h.waitSynced()
+}
+
+func TestEventRetriesBackOffExponentially(t *testing.T) {
+	s := &sessState{retry: transport.Backoff{Min: time.Second, Max: 8 * time.Second, Factor: 2, Rand: func() float64 { return 0.5 }}}
+	var delays []time.Duration
+	for range 6 {
+		s.needRetry = false
+		before := time.Now()
+		s.mu.Lock()
+		s.scheduleRetryLocked()
+		s.mu.Unlock()
+		delays = append(delays, s.retryAt.Sub(before).Round(100*time.Millisecond))
+	}
+	want := []time.Duration{1, 2, 4, 8, 8, 8}
+	for i, w := range want {
+		if delays[i] != w*time.Second {
+			t.Fatalf("delays %v, want 1s,2s,4s,8s then capped at 8s", delays)
+		}
+	}
+	// One round schedules once: a second failure in the same round does not push it out.
+	s.needRetry = false
+	s.scheduleRetryLocked()
+	at := s.retryAt
+	s.scheduleRetryLocked()
+	if !s.retryAt.Equal(at) {
+		t.Fatal("scheduling twice in one round moved the retry time")
+	}
+	s.retry.Reset()
+	s.needRetry = false
+	s.scheduleRetryLocked()
+	if d := time.Until(s.retryAt); d > 1500*time.Millisecond {
+		t.Fatalf("after a success the backoff must restart at its minimum, got %v", d)
+	}
 }

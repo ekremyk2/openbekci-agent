@@ -26,11 +26,16 @@ func (e *upgradeError) Error() string { return "transport: websocket upgrade: " 
 func (e *upgradeError) Unwrap() error { return e.err }
 
 // isProxyLike reports whether err looks like a proxy blocking the upgrade: a
-// non-101 answer, or a connection reset/EOF before the handshake finished.
-// Refused connections and timeouts mean "server down", not "proxy".
+// non-101 answer below 500, or a connection reset/EOF before the handshake
+// finished. Refused connections, timeouts and 5xx answers (a deploy blip, a
+// crashing server) mean "server trouble", not "proxy": they must not drop the
+// agent to long-poll for ten minutes.
 func isProxyLike(err error) bool {
 	var ue *upgradeError
 	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.status >= 500 {
 		return false
 	}
 	if ue.status != 0 {

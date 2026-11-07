@@ -12,10 +12,17 @@ import (
 	"github.com/openbekci/openbekci-agent/internal/transport"
 )
 
-const (
-	inflightTimeout = 30 * time.Second
-	flushTick       = 2 * time.Second
-)
+const inflightTimeout = 30 * time.Second
+
+// flushTick is how often the uploader runs its maintenance (tests shorten it).
+var flushTick = 2 * time.Second
+
+// defaultEventRetry spaces the retries of events the server did not take:
+// 2 s, 4 s, ... up to 5 minutes, with +/- 20 % jitter, so a permanently
+// failing event does not hammer the server every tick.
+func defaultEventRetry() transport.Backoff {
+	return transport.Backoff{Min: 2 * time.Second, Max: 5 * time.Minute, Factor: 2, Jitter: 0.2}
+}
 
 type inflightBatch struct {
 	ids    []string
@@ -49,6 +56,8 @@ type sessState struct {
 	inflight  map[string]inflightBatch
 	cursor    int64
 	needRetry bool
+	retry     transport.Backoff
+	retryAt   time.Time
 }
 
 func (s *sessState) fail(err error) {
@@ -92,7 +101,10 @@ func (s *sessState) ack(ref, status string, detail any) {
 // session is the transport handler: hello, then the message loop.
 func (a *Agent) session(ctx context.Context, sess transport.Session) error {
 	sctx, cancel := context.WithCancel(ctx)
-	s := &sessState{a: a, sess: sess, ctx: sctx, cancel: cancel, ready: make(chan struct{}), wantSnap: -1, wantCfg: -1, inflight: map[string]inflightBatch{}}
+	s := &sessState{a: a, sess: sess, ctx: sctx, cancel: cancel, ready: make(chan struct{}), wantSnap: -1, wantCfg: -1, inflight: map[string]inflightBatch{}, retry: defaultEventRetry()}
+	if a.o.EventRetry.Min > 0 {
+		s.retry = a.o.EventRetry
+	}
 	defer func() {
 		cancel()
 		s.wg.Wait()
@@ -225,12 +237,12 @@ func (s *sessState) maybeRotate(m *protocol.ServerHello) {
 	if !due || !a.rotating.CompareAndSwap(false, true) {
 		return
 	}
-	s.wg.Add(1)
+	a.rotateWG.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer a.rotateWG.Done()
 		defer a.rotating.Store(false)
-		if err := a.rotateToken(s.ctx); err != nil {
-			if s.ctx.Err() == nil {
+		if err := a.rotateToken(a.workCtx); err != nil {
+			if a.workCtx.Err() == nil {
 				a.log.Error("token rotation failed", "error", err)
 			}
 			return
@@ -405,14 +417,27 @@ func (s *sessState) onAck(m *protocol.Ack) {
 	}
 	if retry {
 		s.markRetry()
+	} else {
+		s.mu.Lock()
+		s.retry.Reset()
+		s.mu.Unlock()
 	}
 	s.a.notifyFlush()
 }
 
 func (s *sessState) markRetry() {
 	s.mu.Lock()
-	s.needRetry = true
+	s.scheduleRetryLocked()
 	s.mu.Unlock()
+}
+
+// scheduleRetryLocked asks for a retry once per failure round, after the next
+// backoff delay.
+func (s *sessState) scheduleRetryLocked() {
+	if !s.needRetry {
+		s.needRetry = true
+		s.retryAt = time.Now().Add(s.retry.Next())
+	}
 }
 
 func (s *sessState) flusher() {
@@ -444,14 +469,14 @@ func (s *sessState) maintain() {
 	for ref, b := range s.inflight {
 		if now.Sub(b.sentAt) > inflightTimeout {
 			delete(s.inflight, ref)
-			s.needRetry = true
+			s.scheduleRetryLocked()
 		}
 	}
 	// A held event whose settle failed must not stay out of the queue.
 	if err := s.a.st.ReleaseStale(s.ctx, s.a.now()); err != nil && s.ctx.Err() == nil {
 		s.a.log.Error("release stale held events", "error", err)
 	}
-	if s.needRetry && len(s.inflight) == 0 {
+	if s.needRetry && len(s.inflight) == 0 && !now.Before(s.retryAt) {
 		s.cursor, s.needRetry = 0, false
 	}
 }

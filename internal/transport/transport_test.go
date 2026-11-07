@@ -297,3 +297,14 @@ func TestEnrolAndRotate(t *testing.T) {
 		t.Fatalf("bogus token: %v", err)
 	}
 }
+
+func TestProxyHeuristicIgnoresServerErrors(t *testing.T) {
+	for status, want := range map[int]bool{200: true, 403: true, 404: true, 500: false, 502: false, 504: false} {
+		if got := isProxyLike(&upgradeError{status: status, err: errors.New("bad handshake")}); got != want {
+			t.Errorf("status %d: isProxyLike=%v, want %v", status, got, want)
+		}
+	}
+	if !isProxyLike(&upgradeError{err: errors.New("connection reset by peer")}) {
+		t.Error("a reset before the handshake still looks like a proxy")
+	}
+}

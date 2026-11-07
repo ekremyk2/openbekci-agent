@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -70,7 +72,7 @@ func newRoot() *cobra.Command {
 type loader func() (*config.Config, string, error)
 
 func enrolCmd(load loader) *cobra.Command {
-	var server, token, org, site string
+	var server, token, tokenFile, org, site string
 	cmd := &cobra.Command{
 		Use:   "enrol",
 		Short: "Enrol this agent with the server using a one-time token",
@@ -86,9 +88,13 @@ func enrolCmd(load loader) *cobra.Command {
 			if cfg.Server == "" {
 				return errors.New("--server is required (or set server in agent.yaml / " + config.EnvPrefix + "SERVER)")
 			}
+			tok, err := resolveEnrolToken(cmd, token, tokenFile, os.Getenv(EnrolTokenEnv))
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
-			id, err := agent.Enrol(ctx, cfg, agent.EnrolOptions{Server: cfg.Server, Token: token, Org: org, Site: site, Version: version})
+			id, err := agent.Enrol(ctx, cfg, agent.EnrolOptions{Server: cfg.Server, Token: tok, Org: org, Site: site, Version: version})
 			if err != nil {
 				return err
 			}
@@ -101,11 +107,54 @@ func enrolCmd(load loader) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server base URL, https://...")
-	cmd.Flags().StringVar(&token, "token", "", "one-time enrolment token (obk_enr_...)")
+	cmd.Flags().StringVar(&token, "token", "", "one-time enrolment token (obk_enr_...); visible in the process list, prefer --token-file or "+EnrolTokenEnv)
+	cmd.Flags().StringVar(&tokenFile, "token-file", "", "file holding the one-time enrolment token (\"-\" reads standard input)")
 	cmd.Flags().StringVar(&org, "org", "", "organization id (only for the org/site scoped enrolment endpoint)")
 	cmd.Flags().StringVar(&site, "site", "", "site id (only for the org/site scoped enrolment endpoint)")
-	_ = cmd.MarkFlagRequired("token")
 	return cmd
+}
+
+// EnrolTokenEnv is the environment variable that carries the enrolment token.
+const EnrolTokenEnv = config.EnvPrefix + "ENROL_TOKEN"
+
+// resolveEnrolToken picks the enrolment token from exactly one of --token-file,
+// the environment or --token. The flag is the weakest source: argv is visible
+// to every local user in the process list and lands in shell history.
+func resolveEnrolToken(cmd *cobra.Command, flag, file, env string) (string, error) {
+	sources := 0
+	for _, v := range []string{flag, file, env} {
+		if v != "" {
+			sources++
+		}
+	}
+	switch {
+	case sources == 0:
+		return "", errors.New("an enrolment token is required: --token-file <file> (or \"-\" for stdin), " + EnrolTokenEnv + " or --token")
+	case sources > 1:
+		return "", errors.New("give the enrolment token once: only one of --token-file, " + EnrolTokenEnv + " and --token")
+	}
+	switch {
+	case file != "":
+		var raw []byte
+		var err error
+		if file == "-" {
+			raw, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 4096))
+		} else {
+			raw, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return "", fmt.Errorf("read token file: %w", err)
+		}
+		tok := strings.TrimSpace(string(raw))
+		if tok == "" {
+			return "", errors.New("token file is empty")
+		}
+		return tok, nil
+	case env != "":
+		return strings.TrimSpace(env), nil
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "warning: --token is visible in the process list and shell history; use --token-file or "+EnrolTokenEnv+" instead")
+	return strings.TrimSpace(flag), nil
 }
 
 // writeInitialConfig creates agent.yaml with the server URL when no file exists

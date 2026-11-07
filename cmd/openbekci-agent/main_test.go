@@ -106,3 +106,38 @@ func TestCLIVersionAndRunRefusesWithoutEnrolment(t *testing.T) {
 		t.Fatal("run did not exit")
 	}
 }
+
+func TestEnrolTokenSources(t *testing.T) {
+	fs := fakeserver.New(t)
+	dir := t.TempDir()
+	t.Setenv("OPENBEKCI_AGENT_CA_FILE", fs.CACertFile())
+	enrol := func(args ...string) (string, error) {
+		t.Setenv("OPENBEKCI_AGENT_STATE_DIR", t.TempDir())
+		return execute(t, append([]string{"--config", filepath.Join(dir, "agent.yaml"), "enrol", "--server", fs.URL}, args...)...)
+	}
+
+	// --token-file (with a trailing newline, as editors write it)
+	tf := filepath.Join(dir, "token")
+	_ = os.WriteFile(tf, []byte(fs.NewEnrolToken()+"\n"), 0o600)
+	if out, err := enrol("--token-file", tf); err != nil || !strings.Contains(out, "Enrolled") || strings.Contains(out, "warning") {
+		t.Fatalf("--token-file: %v\n%s", err, out)
+	}
+	// environment variable
+	t.Setenv("OPENBEKCI_AGENT_ENROL_TOKEN", fs.NewEnrolToken())
+	if out, err := enrol(); err != nil || !strings.Contains(out, "Enrolled") || strings.Contains(out, "warning") {
+		t.Fatalf("env: %v\n%s", err, out)
+	}
+	// ambiguity is an error
+	if _, err := enrol("--token-file", tf); err == nil {
+		t.Fatal("two token sources accepted")
+	}
+	t.Setenv("OPENBEKCI_AGENT_ENROL_TOKEN", "")
+	// --token still works but warns about the process list
+	if out, err := enrol("--token", fs.NewEnrolToken()); err != nil || !strings.Contains(out, "warning: --token is visible") {
+		t.Fatalf("--token: %v\n%s", err, out)
+	}
+	// nothing at all
+	if _, err := enrol(); err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("no token: %v", err)
+	}
+}

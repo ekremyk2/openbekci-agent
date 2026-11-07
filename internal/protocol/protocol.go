@@ -596,6 +596,13 @@ type PointConfig struct {
 	Enabled   bool      `json:"enabled"`
 }
 
+// Bounds of the offline grace period in hours (1 hour to 14 days). Larger
+// values would let an unreachable agent keep opening gates for too long.
+const (
+	MinGraceHours = 1
+	MaxGraceHours = 336
+)
+
 // Settings are the site access settings carried by update_config.
 type Settings struct {
 	OfflineGraceHours int    `json:"offline_grace_hours"`
@@ -654,6 +661,9 @@ func (c Command) Validate() error {
 			if !IsUUID(p.ID) || p.Name == "" || p.DriverRef.Instance == "" {
 				return errors.New("command update_config: invalid point")
 			}
+		}
+		if g := c.Settings.OfflineGraceHours; g != 0 && (g < MinGraceHours || g > MaxGraceHours) {
+			return fmt.Errorf("command update_config: offline_grace_hours %d outside %d-%d", g, MinGraceHours, MaxGraceHours)
 		}
 	case CmdRequestSnapshot, CmdRevoked:
 	default:

@@ -54,6 +54,9 @@ type Options struct {
 	HeartbeatEvery time.Duration
 	// ReadyTimeout bounds the wait for config/snapshot before event upload.
 	ReadyTimeout time.Duration
+	// EventRetry overrides the backoff between retries of events the server
+	// did not accept (tests).
+	EventRetry transport.Backoff
 	// Transport lets tests tune the transport options.
 	Transport func(*transport.Options)
 }
@@ -87,6 +90,11 @@ type Agent struct {
 	presentCh       chan driver.Presentation
 
 	rotating atomic.Bool
+	// workCtx lives as long as Run's workers; token rotation runs on it, not on
+	// a session context, so a reconnect cannot cancel a rotation whose response
+	// the server already acted on.
+	workCtx  context.Context
+	rotateWG sync.WaitGroup
 	// quarantined is set by a bare HTTP 401: the agent keeps its allow-list
 	// and keeps deciding, stops uploading (it cannot authenticate), and
 	// retries. Any authenticated contact clears it.
@@ -262,6 +270,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.safeStateSweep(ctx)
 
 	wctx, stopWorkers := context.WithCancel(ctx)
+	a.workCtx = wctx
 	var wg sync.WaitGroup
 	for _, in := range a.drivers {
 		if in.drv == nil {
@@ -277,6 +286,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	runErr := a.client.Run(wctx, a.session)
 	stopWorkers()
 	wg.Wait()
+	a.rotateWG.Wait()
 
 	switch {
 	case errors.Is(runErr, transport.ErrRevoked):
@@ -333,8 +343,10 @@ func (a *Agent) refreshSettings(ctx context.Context) {
 		}
 	}
 	grace := a.cfg.OfflineGraceHours
-	if pc.Settings.OfflineGraceHours > 0 {
-		grace = pc.Settings.OfflineGraceHours
+	if g := pc.Settings.OfflineGraceHours; g >= protocol.MinGraceHours && g <= protocol.MaxGraceHours {
+		grace = g
+	} else if g != 0 {
+		a.log.Error("ignoring out-of-range offline_grace_hours from the server", "hours", g, "min", protocol.MinGraceHours, "max", protocol.MaxGraceHours)
 	}
 	a.eng.SetSettings(engine.Settings{Location: loc, GraceHours: grace, PlateMatch: pc.Settings.PlateMatch})
 }

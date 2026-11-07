@@ -293,3 +293,30 @@ func TestStoppedUsesTheLargerOfWallAndMonotonicAge(t *testing.T) {
 		t.Fatal("the wall age must still count")
 	}
 }
+
+// A camera spamming blurry frames yields one deny event per burst, not one per frame.
+func TestUnreadableBurstIsDebounced(t *testing.T) {
+	f := newFixture(t)
+	for i := 0; i < 20; i++ {
+		_, err := f.eng.Handle(bg, Presentation{PointID: f.point, Kind: "plate", Value: "", Confidence: 0.3, Detail: map[string]any{"low_confidence": true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.advance(50 * time.Millisecond) // 1 s of frames
+	}
+	if d, _ := f.st.QueueDepth(bg); d != 1 {
+		t.Fatalf("%d events for one burst of unreadable frames, want 1", d)
+	}
+	f.advance(3 * time.Second)
+	if _, err := f.eng.Handle(bg, Presentation{PointID: f.point, Kind: "plate", Value: "", Confidence: 0.3}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := f.st.QueueDepth(bg); d != 2 {
+		t.Fatalf("a new burst after the debounce window must be recorded (depth %d)", d)
+	}
+	// Another point has its own window.
+	other := protocol.NewID()
+	if r, err := f.eng.Handle(bg, Presentation{PointID: other, Kind: "plate", Value: "", Confidence: 0.3}); err != nil || r.Suppressed {
+		t.Fatalf("other point suppressed: %+v %v", r, err)
+	}
+}

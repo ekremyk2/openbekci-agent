@@ -76,6 +76,7 @@ func (h *harness) options() Options {
 		Config: h.cfg, Registrations: []driver.Registration{h.registration()}, Version: "test", Log: h.logger(),
 		Clock:          func() time.Time { return time.Now().Add(time.Duration(h.shift.Load())) },
 		HeartbeatEvery: 150 * time.Millisecond, ReadyTimeout: 2 * time.Second,
+		EventRetry: transport.Backoff{Min: 20 * time.Millisecond, Max: 200 * time.Millisecond, Factor: 2, Jitter: 0.2},
 		Transport: func(o *transport.Options) {
 			o.Backoff = transport.Backoff{Min: 10 * time.Millisecond, Max: 50 * time.Millisecond, Factor: 2, Jitter: 0.2}
 			o.PollWait = 1

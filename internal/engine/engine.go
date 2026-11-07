@@ -27,6 +27,11 @@ const DefaultGraceHours = 72
 // DefaultDedupe is the presentation dedupe window per (point, value).
 const DefaultDedupe = 10 * time.Second
 
+// DefaultDenyDebounce is the window in which an unreadable presentation (a
+// blurry frame, a malformed QR) on one point yields a single deny event. A
+// camera that spams low-confidence frames would otherwise fill the queue.
+const DefaultDenyDebounce = 2 * time.Second
+
 // Store is the part of the local store the engine needs.
 type Store interface {
 	Lookup(ctx context.Context, kind, value string) ([]protocol.Entry, error)
@@ -78,7 +83,10 @@ type Options struct {
 	// OnEvent is called after an event was queued.
 	OnEvent func()
 	Dedupe  time.Duration
-	Log     *slog.Logger
+	// DenyDebounce is the per-(point, kind) window for unreadable
+	// presentations (default 2 s).
+	DenyDebounce time.Duration
+	Log          *slog.Logger
 }
 
 // Result describes what Handle did with a presentation.
@@ -116,6 +124,9 @@ func New(o Options) *Engine {
 	}
 	if o.Dedupe == 0 {
 		o.Dedupe = DefaultDedupe
+	}
+	if o.DenyDebounce == 0 {
+		o.DenyDebounce = DefaultDenyDebounce
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
@@ -194,10 +205,10 @@ func canonical(kind, raw string) (string, bool) {
 	return "", false
 }
 
-func (e *Engine) dedupe(key string, now time.Time) bool {
+func (e *Engine) dedupe(key string, now time.Time, window time.Duration) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if t, ok := e.dd[key]; ok && now.Sub(t) < e.o.Dedupe && now.Sub(t) >= 0 {
+	if t, ok := e.dd[key]; ok && now.Sub(t) < window && now.Sub(t) >= 0 {
 		return true
 	}
 	if len(e.dd) > 1024 {
@@ -218,7 +229,11 @@ func (e *Engine) Handle(ctx context.Context, p Presentation) (Result, error) {
 	st := e.Settings()
 	value, valid := canonical(p.Kind, p.Value)
 
-	if valid && e.dedupe(p.PointID+"|"+p.Kind+"|"+value, now) {
+	if valid && e.dedupe(p.PointID+"|"+p.Kind+"|"+value, now, e.o.Dedupe) {
+		return Result{Suppressed: true}, nil
+	}
+	// Unreadable reads have no value to key on: one deny event per burst.
+	if !valid && e.dedupe(p.PointID+"|"+p.Kind+"|\x00unreadable", now, e.o.DenyDebounce) {
 		return Result{Suppressed: true}, nil
 	}
 

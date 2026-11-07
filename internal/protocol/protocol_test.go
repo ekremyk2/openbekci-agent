@@ -143,3 +143,20 @@ func TestNewEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUpdateConfigGraceBounds(t *testing.T) {
+	mk := func(h int) Command {
+		v := int64(1)
+		return Command{Command: CmdUpdateConfig, ConfigVersion: &v, Site: &Site{Timezone: "UTC"}, Points: []PointConfig{}, Settings: &Settings{OfflineGraceHours: h}}
+	}
+	for _, h := range []int{1, 72, 336} {
+		if err := mk(h).Validate(); err != nil {
+			t.Errorf("%d h: %v", h, err)
+		}
+	}
+	for _, h := range []int{-1, 337, 2_500_000} {
+		if err := mk(h).Validate(); err == nil {
+			t.Errorf("%d h accepted", h)
+		}
+	}
+}

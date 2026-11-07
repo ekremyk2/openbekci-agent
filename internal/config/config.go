@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openbekci/openbekci-agent/internal/protocol"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,8 +160,8 @@ func (c *Config) Validate(knownTypes []string) error {
 	if _, err := c.Level(); err != nil {
 		return err
 	}
-	if c.OfflineGraceHours < 1 {
-		return errors.New("offline_grace_hours must be >= 1")
+	if c.OfflineGraceHours < protocol.MinGraceHours || c.OfflineGraceHours > protocol.MaxGraceHours {
+		return fmt.Errorf("offline_grace_hours must be %d-%d", protocol.MinGraceHours, protocol.MaxGraceHours)
 	}
 	names := map[string]bool{}
 	for i, d := range c.Drivers {

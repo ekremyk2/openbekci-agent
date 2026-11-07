@@ -80,6 +80,9 @@ func TestValidation(t *testing.T) {
 		{"unknown type", "drivers:\n - {name: a, type: nope}\n", "unknown type"},
 		{"point to missing instance", "drivers:\n - {name: a, type: mock}\npoints:\n - {point: p, open: {instance: zzz}}\n", "not a configured driver"},
 		{"missing ca file", "ca_file: /definitely/not/here.pem\n", "ca_file"},
+		{"grace too long", "offline_grace_hours: 337\n", "offline_grace_hours"},
+		{"grace absurd", "offline_grace_hours: 9999999999\n", "offline_grace_hours"},
+		{"grace negative", "offline_grace_hours: -1\n", "offline_grace_hours"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,5 +98,17 @@ func TestValidation(t *testing.T) {
 	}
 	if _, err := Load(write(t, "nonsense: true\n")); err == nil {
 		t.Fatal("unknown top-level key accepted")
+	}
+}
+
+func TestGraceBoundsInclusive(t *testing.T) {
+	for _, h := range []string{"1", "72", "336"} {
+		c, err := Load(write(t, "offline_grace_hours: "+h+"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Validate(nil); err != nil {
+			t.Errorf("%s h rejected: %v", h, err)
+		}
 	}
 }
