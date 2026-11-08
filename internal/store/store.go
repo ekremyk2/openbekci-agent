@@ -122,6 +122,11 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
+	// The database and its WAL exist now; the directory was secured before they were created.
+	if err := fsutil.SecureDir(dir); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: state dir permissions: %w", err)
+	}
 	s := &Store{db: db, seal: sl, dir: dir}
 	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()

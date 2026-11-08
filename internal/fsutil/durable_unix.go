@@ -10,7 +10,7 @@ func RenameDurable(tmp, path string) error { return os.Rename(tmp, path) }
 
 // SyncDir fsyncs a directory so a completed rename survives a power loss.
 func SyncDir(dir string) error {
-	d, err := os.Open(dir) //nolint:gosec // dir is the agent's own state directory
+	d, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
