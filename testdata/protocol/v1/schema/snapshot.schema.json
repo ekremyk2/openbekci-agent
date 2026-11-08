@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/snapshot.schema.json",
+  "description": "part <= parts is checked by the agent, JSON Schema cannot compare two properties.",
+  "type": "object",
+  "required": ["version", "part", "parts", "site", "entries"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 0 },
+    "part": { "type": "integer", "minimum": 1 },
+    "parts": { "type": "integer", "minimum": 1 },
+    "site": { "type": "object", "required": ["timezone"], "properties": { "timezone": { "type": "string" } } },
+    "entries": { "type": "array", "maxItems": 2000, "items": { "$ref": "defs.json#/$defs/entry" } }
+  },
+  "additionalProperties": true
+}

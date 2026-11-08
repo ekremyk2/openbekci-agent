@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/ack.schema.json",
+  "description": "stale is an agent-side addition to design 4.7 (a snapshot older than the stored allow-list that was not asked for).",
+  "type": "object",
+  "required": ["ref", "status"],
+  "properties": {
+    "ref": { "$ref": "defs.json#/$defs/uuid" },
+    "status": { "enum": ["ok", "duplicate", "gap", "done", "failed", "expired", "refused", "unknown_point", "unsupported", "error", "stale"] },
+    "detail": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/hello-server.schema.json",
+  "type": "object",
+  "required": ["from", "protocol_version", "server_time", "heartbeat_seconds", "config_version", "site", "snapshot_version"],
+  "properties": {
+    "from": { "const": "server" },
+    "protocol_version": { "type": "integer" },
+    "server_time": { "$ref": "defs.json#/$defs/ts" },
+    "heartbeat_seconds": { "type": "integer", "minimum": 10, "maximum": 120 },
+    "config_version": { "type": "integer", "minimum": 0 },
+    "site": {
+      "type": "object",
+      "required": ["id", "timezone"],
+      "properties": { "id": { "type": "string" }, "timezone": { "type": "string" } }
+    },
+    "snapshot_version": { "type": "integer", "minimum": 0 },
+    "rotate_by": { "$ref": "defs.json#/$defs/ts" },
+    "rotate_now": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

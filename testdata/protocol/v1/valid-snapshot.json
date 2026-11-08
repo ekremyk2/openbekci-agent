@@ -1,0 +1,49 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "version": 1042,
+    "part": 1,
+    "parts": 2,
+    "site": {
+      "timezone": "Europe/Istanbul"
+    },
+    "entries": [
+      {
+        "id": "0192f1a0-0000-7000-8000-0000000000c1",
+        "kind": "plate",
+        "value": "34ABC123",
+        "points": [
+          "0192f1a0-0000-7000-8000-0000000000b1"
+        ],
+        "valid_from": "2026-11-07T10:00:00Z",
+        "valid_to": "2026-11-07T11:30:00Z",
+        "recurring": null,
+        "max_uses": 1
+      },
+      {
+        "id": "0192f1a0-0000-7000-8000-0000000000c2",
+        "kind": "visitor_qr",
+        "value": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "points": [
+          "0192f1a0-0000-7000-8000-0000000000b1",
+          "0192f1a0-0000-7000-8000-0000000000b2"
+        ],
+        "valid_from": "2026-11-07T08:00:00Z",
+        "valid_to": null,
+        "recurring": {
+          "days": [
+            1,
+            3,
+            5
+          ],
+          "start": "22:00",
+          "end": "06:00"
+        },
+        "max_uses": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/hello-agent.schema.json",
+  "type": "object",
+  "required": ["from", "agent_id", "agent_version", "protocol_versions", "snapshot_version", "config_version", "drivers", "queue_depth"],
+  "properties": {
+    "from": { "const": "agent" },
+    "agent_id": { "type": "string" },
+    "agent_version": { "type": "string" },
+    "platform": { "type": "string" },
+    "protocol_versions": { "type": "array", "items": { "type": "integer" } },
+    "snapshot_version": { "type": "integer", "minimum": 0 },
+    "config_version": { "type": "integer", "minimum": 0 },
+    "drivers": { "type": "array", "items": { "$ref": "defs.json#/$defs/driver_state" } },
+    "queue_depth": { "type": "integer", "minimum": 0 },
+    "clock_offset_ms": { "type": ["integer", "null"] }
+  },
+  "additionalProperties": true
+}

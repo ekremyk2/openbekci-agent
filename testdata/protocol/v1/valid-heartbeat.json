@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "type": "heartbeat",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "snapshot_version": 1042,
+    "queue_depth": 3,
+    "dropped_events": 0,
+    "uptime_s": 86400,
+    "clock_suspect": false,
+    "drivers": [
+      {
+        "instance": "gate-cam",
+        "state": "ok",
+        "detail": ""
+      }
+    ]
+  }
+}

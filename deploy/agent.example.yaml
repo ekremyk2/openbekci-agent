@@ -1,0 +1,71 @@
+# /etc/openbekci-agent/agent.yaml
+#
+# Every key can be overridden by an environment variable:
+#   OPENBEKCI_AGENT_SERVER, _STATE_DIR, _CA_FILE, _LOG_LEVEL, _OFFLINE_GRACE_HOURS
+# The agent token is NOT stored here: `openbekci-agent enrol` writes it to
+# <state_dir>/agent.token (mode 0600).
+
+# Base URL of your OpenBekci server. https only; there is no insecure mode.
+server: https://bekci.example.org
+
+# Allow-list, event queue, store.key (encryption key) and agent.token live here.
+state_dir: /var/lib/openbekci-agent
+
+# Optional extra CA (PEM) for a private CA, added to the system roots.
+# ca_file: /etc/openbekci-agent/ca.pem
+
+# debug also writes plates (personal data) to the log; use only to troubleshoot.
+log_level: info
+
+# Grace period used until the server's site setting arrives; afterwards the
+# server's value wins. After this long without server contact the agent stops
+# opening for credentials (decisions are still logged as agent_stopped).
+offline_grace_hours: 72
+
+# Hardware. `name` is what the server's access point driver_ref.instance refers to.
+drivers:
+  # A Shelly Gen1 relay that switches itself off after the timer (no off_url).
+  - name: gate-relay
+    type: relay
+    config:
+      mode: http
+      pulse_ms: 800          # 100-10000
+      min_interval_ms: 2000  # refuse a new open sooner than this
+      http:
+        channels:
+          "1":
+            on_url: "http://192.168.1.50/relay/0?turn=on&timer=1"
+            # off_url: "http://192.168.1.50/relay/0?turn=off"   # for devices that do not self-reset
+            # method: GET
+            # headers: { Authorization: "Basic ..." }
+            # timeout_ms: 3000
+
+  # USB serial relay board (hex frames from the board's documentation). The agent
+  # writes the frames to the device file; set the line speed with the OS if the
+  # board is not CDC-ACM.
+  # - name: desk-relay
+  #   type: relay
+  #   config:
+  #     mode: serial
+  #     serial:
+  #       port: /dev/ttyUSB0
+  #       baud: 9600
+  #       channels:
+  #         "1": { on: "A00101A2", off: "A00100A1" }
+
+  # Plate camera. Only the scripted "mock" adapter exists until the first site's
+  # camera brand is known.
+  - name: gate-cam
+    type: platecam
+    config:
+      adapter: mock
+      confidence_min: 0.80
+      dedupe_s: 30
+      # channel_map: { entry: in, exit: out }
+
+# Only needed where the reader and the opener are different instances: a point whose
+# driver_ref.instance is gate-cam is opened through gate-relay channel 1.
+points:
+  - point: gate-cam
+    # channel: in      # optional: restrict to one driver_ref.channel
+    open: { instance: gate-relay, channel: "1" }

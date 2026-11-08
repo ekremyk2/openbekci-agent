@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "type": "event",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "clock_offset_ms": -312,
+    "events": [
+      {
+        "id": "0192f1a0-0000-7000-8000-0000000000e1",
+        "point_id": "0192f1a0-0000-7000-8000-0000000000b1",
+        "decision": "allow",
+        "reason": "match",
+        "credential_id": "0192f1a0-0000-7000-8000-0000000000c1",
+        "presented_kind": "plate",
+        "observed_plate": "34ABC123",
+        "occurred_at": "2026-11-07T10:01:12.481Z",
+        "raw_ref": "snap/20261107-100112.jpg",
+        "detail": {
+          "confidence": 0.93,
+          "lane": "in"
+        }
+      }
+    ]
+  }
+}

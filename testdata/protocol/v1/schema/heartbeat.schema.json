@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/heartbeat.schema.json",
+  "type": "object",
+  "required": ["snapshot_version", "queue_depth", "drivers"],
+  "properties": {
+    "snapshot_version": { "type": "integer", "minimum": 0 },
+    "queue_depth": { "type": "integer", "minimum": 0 },
+    "drivers": { "type": "array", "items": { "$ref": "defs.json#/$defs/driver_state" } },
+    "dropped_events": { "type": "integer", "minimum": 0 },
+    "uptime_s": { "type": "integer", "minimum": 0 },
+    "clock_suspect": { "type": "boolean" },
+    "clock_offset_ms": { "type": ["integer", "null"] }
+  },
+  "additionalProperties": true
+}

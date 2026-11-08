@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "version": 1,
+    "part": 3,
+    "parts": 2,
+    "site": {
+      "timezone": "Europe/Istanbul"
+    },
+    "entries": []
+  }
+}

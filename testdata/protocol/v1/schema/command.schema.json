@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/command.schema.json",
+  "type": "object",
+  "required": ["command"],
+  "oneOf": [
+    {
+      "properties": {
+        "command": { "const": "open_point" },
+        "point_id": { "$ref": "defs.json#/$defs/uuid" },
+        "issued_at": { "$ref": "defs.json#/$defs/ts" },
+        "expires_at": { "$ref": "defs.json#/$defs/ts" },
+        "credential_id": { "$ref": "defs.json#/$defs/uuid" },
+        "visitor_entry_id": { "$ref": "defs.json#/$defs/uuid" },
+        "actor": { "type": "object", "required": ["user_id"], "properties": { "user_id": { "type": "string" }, "display": { "type": "string" } } }
+      },
+      "required": ["command", "point_id", "issued_at", "expires_at"]
+    },
+    {
+      "properties": { "command": { "const": "revoke_credential" }, "credential_id": { "$ref": "defs.json#/$defs/uuid" } },
+      "required": ["command", "credential_id"]
+    },
+    {
+      "properties": {
+        "command": { "const": "update_config" },
+        "config_version": { "type": "integer", "minimum": 0 },
+        "site": { "type": "object", "required": ["timezone"], "properties": { "timezone": { "type": "string", "minLength": 1 } } },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "kind", "direction", "driver_ref", "enabled"],
+            "properties": {
+              "id": { "$ref": "defs.json#/$defs/uuid" },
+              "name": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string" },
+              "direction": { "type": "string" },
+              "driver_ref": { "$ref": "defs.json#/$defs/driver_ref" },
+              "enabled": { "type": "boolean" }
+            }
+          }
+        },
+        "settings": {
+          "type": "object",
+          "required": ["offline_grace_hours", "plate_match", "heartbeat_seconds", "maintenance_hour"],
+          "properties": {
+            "offline_grace_hours": { "type": "integer", "minimum": 1, "maximum": 336, "description": "1..336 is the agent bound (an agent-side hardening, not yet in design 07)" },
+            "plate_match": { "type": "string" },
+            "heartbeat_seconds": { "type": "integer" },
+            "maintenance_hour": { "type": "integer" }
+          }
+        }
+      },
+      "required": ["command", "config_version", "site", "points", "settings"]
+    },
+    { "properties": { "command": { "const": "request_snapshot" } }, "required": ["command"] },
+    { "properties": { "command": { "const": "revoked" } }, "required": ["command"] }
+  ],
+  "additionalProperties": true
+}

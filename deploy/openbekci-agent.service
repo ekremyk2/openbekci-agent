@@ -1,0 +1,61 @@
+[Unit]
+Description=OpenBekci on-site access agent
+Documentation=https://github.com/ekremyk2/openbekci-agent
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openbekci-agent
+Group=openbekci-agent
+# dialout: USB/serial relay boards; gpio: Raspberry Pi GPIO character devices
+SupplementaryGroups=dialout gpio
+ExecStart=/usr/local/bin/openbekci-agent run --config /etc/openbekci-agent/agent.yaml
+Restart=always
+RestartSec=5
+# exit code 3 = the server revoked this agent; do not restart-loop, re-enrol instead
+RestartPreventExitStatus=3
+
+# State: allow-list, event queue, store key and agent token (mode 0600 files)
+StateDirectory=openbekci-agent
+StateDirectoryMode=0700
+ConfigurationDirectory=openbekci-agent
+ConfigurationDirectoryMode=0750
+Environment=OPENBEKCI_AGENT_STATE_DIR=/var/lib/openbekci-agent
+UMask=0077
+
+# Hardening
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Only the device nodes relay boards need
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-ttyAMA rw
+DeviceAllow=char-gpiochip rw
+# The agent listens only on loopback or a LAN address you configure (camera push);
+# tighten with IPAddressAllow= for your LAN if you like.
+
+[Install]
+WantedBy=multi-user.target

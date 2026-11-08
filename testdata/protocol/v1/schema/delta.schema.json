@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.openbekci.org/agent-protocol/v1/delta.schema.json",
+  "description": "to_version > from_version is checked by the agent, JSON Schema cannot compare two properties.",
+  "type": "object",
+  "required": ["from_version", "to_version", "changes"],
+  "properties": {
+    "from_version": { "type": "integer", "minimum": 0 },
+    "to_version": { "type": "integer", "minimum": 0 },
+    "changes": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op", "entry"],
+            "properties": { "op": { "const": "upsert" }, "entry": { "$ref": "defs.json#/$defs/entry" } }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op", "credential_id"],
+            "properties": { "op": { "const": "remove" }, "credential_id": { "$ref": "defs.json#/$defs/uuid" } }
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": true
+}

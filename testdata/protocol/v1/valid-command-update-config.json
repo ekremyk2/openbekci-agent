@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "type": "command",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "command": "update_config",
+    "config_version": 8,
+    "site": {
+      "timezone": "Europe/Istanbul"
+    },
+    "points": [
+      {
+        "id": "0192f1a0-0000-7000-8000-0000000000b1",
+        "name": "Main gate - in",
+        "kind": "vehicle_gate",
+        "direction": "in",
+        "driver_ref": {
+          "instance": "gate-cam",
+          "channel": "in"
+        },
+        "enabled": true
+      }
+    ],
+    "settings": {
+      "offline_grace_hours": 72,
+      "plate_match": "exact",
+      "heartbeat_seconds": 30,
+      "maintenance_hour": 3
+    }
+  }
+}

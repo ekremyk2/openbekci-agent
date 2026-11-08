@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "0192f1a0-0000-7000-8000-0000000000f1",
+  "ts": "2026-11-07T10:00:00.123Z",
+  "payload": {
+    "from": "agent",
+    "agent_id": "0192f1a0-0000-7000-8000-0000000000a1",
+    "agent_version": "0.3.0",
+    "platform": "linux/arm64",
+    "protocol_versions": [
+      1
+    ],
+    "snapshot_version": 1041,
+    "config_version": 7,
+    "drivers": [
+      {
+        "instance": "gate-relay",
+        "state": "ok"
+      }
+    ],
+    "queue_depth": 0,
+    "clock_offset_ms": -312
+  }
+}
