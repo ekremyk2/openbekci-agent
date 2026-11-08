@@ -62,4 +62,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test -count=1 ./internal/protocol -run 'TestGenerateFixtures|TestValidFixturesRoundTrip|TestInvalidFixturesRejected'
+      - name: Fixtures match the Go source of truth and the Appendix B schemas
+        run: go test -count=1 ./internal/protocol -run 'TestGenerateFixtures|TestValidFixtures|TestInvalidFixtures|TestLimitFixturesExist'
+      - name: Regenerating the fixtures changes nothing
+        run: |
+          go test ./internal/protocol -run TestGenerateFixtures -update-fixtures
+          git diff --exit-code -- testdata/protocol
+          test -z "$(git status --porcelain -- testdata/protocol)"
